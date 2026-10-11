@@ -110,7 +110,12 @@ export function acrossCurrencies(
     the cent can take it.
 
     A `close` is neither — its proceeds ARE the amount, typed into the box that
-    holds them, and the form puts them back there itself. */
+    holds them, and the form puts them back there itself.
+
+    The chat's card for a correction sends the amount back as this form does,
+    so the backend reads the same rule (`crud.amount_was_stated`, brief AO),
+    pinned on the cases of `tests/statedAmount.test.ts`: change both or
+    neither. */
 export function wasStated(entry: Entry): boolean {
   if (entry.kind === "close") return false;
   if (acrossCurrencies(entry.currency, entry.price_currency)) {

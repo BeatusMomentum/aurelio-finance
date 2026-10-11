@@ -87,7 +87,7 @@ import re
 import time
 import uuid
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, BeforeValidator, Field, ValidationError, model_validator
@@ -1094,6 +1094,468 @@ def _transaction_receipt(result: dict) -> list[tuple]:
         ("At the ECB rate of", result.get("fx_as_of"), "date"),
         ("Held at", result.get("institution"), "text"),
     ]
+
+
+# --- change_ledger_entry -------------------------------------------------------------
+#
+# An entry of the ledger, corrected or deleted as the ledger form on the
+# Portfolio page corrects and deletes one (brief AO): a correction is the
+# form's PUT, its amount sent back as the form sends it, through the function
+# its request calls; a deletion is the one function both doors call, which
+# leaves a PAC's occurrence or a dividend's day settled so the catch-up does
+# not write it again (`crud.delete_transaction`). The entry is named as the
+# reader sees it, by its day, its kind, its instrument and, when two match,
+# its amount: never by an id. Each card says what it moves, worked out by the
+# functions the pages read (the cash register and the projection), on the
+# ledger as the change would leave it.
+
+
+class ChangeLedgerEntryArgs(BaseModel):
+    """One entry of their investment ledger, corrected or deleted."""
+
+    action: Literal["correct", "delete"] = Field(
+        ...,
+        description="correct: the entry takes the figures of their statement. delete: the entry goes.",
+    )
+    date: datetime.date = Field(
+        ...,
+        description=(
+            "The entry's day, as the ledger in the picture shows it; for a PAC's buy, the "
+            "day it was bought or the occurrence it is for."
+        ),
+    )
+    kind: Literal["buy", "sell", "dividend", "close"] = Field(
+        ..., description="The entry's kind, as the ledger in the picture shows it."
+    )
+    instrument: str = Field(
+        ...,
+        min_length=1,
+        description="Its ticker as the picture shows it, or its name for an entry with no ticker.",
+    )
+    amount: float | None = Field(
+        default=None,
+        description=(
+            "Its amount as the picture shows it, only when two entries share the day, the "
+            "kind and the instrument."
+        ),
+    )
+    new_date: datetime.date | None = Field(
+        default=None,
+        description="correct: the day it happened, or null to keep it. A dividend the app recorded keeps its day.",
+    )
+    new_quantity: float | None = Field(
+        default=None, gt=0, description="correct: the units, or null to keep them."
+    )
+    new_unit_price: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "correct: the price per unit (a dividend's, per share), in the price's "
+            "currency, or null to keep it."
+        ),
+    )
+    new_fees: float | None = Field(
+        default=None, ge=0, description="correct: the fees, in the cash's currency, or null to keep them."
+    )
+    new_amount: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "correct: the cash the account actually moved, from their statement (for a "
+            "close, what came back). Null keeps a figure they stated, and works out again "
+            "one the app derived."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _what_each_action_needs(self):
+        new = (self.new_date, self.new_quantity, self.new_unit_price, self.new_fees, self.new_amount)
+        if self.action == "correct" and all(v is None for v in new):
+            raise ValueError("correct needs at least one corrected figure.")
+        if self.action == "delete" and any(v is not None for v in new):
+            raise ValueError("delete takes no new figures.")
+        return self
+
+
+def _entry_text(t: models.Transaction) -> str:
+    """An entry in one line, as the ledger in the picture reads."""
+    what = t.symbol or t.asset_name
+    if t.kind == "close":
+        line = f"{t.date} close {what}: {t.amount:.2f} {t.currency} back"
+    else:
+        line = f"{t.date} {t.kind} {t.quantity:g} x {what} = {t.amount:.2f} {t.currency}"
+    return line + (" (estimated)" if t.estimated else "")
+
+
+def _ledger_row(db: Session, args: ChangeLedgerEntryArgs) -> models.Transaction:
+    """The entry the reader means, by what they see, or a refusal the model
+    can act on. A PAC's buy answers to its occurrence's day as well as its
+    own, both being on its line in the picture; an entry dated that day is
+    preferred."""
+    rows = crud.get_transactions(db)
+    wanted = args.instrument.strip().casefold()
+    day = args.date.isoformat()
+
+    def named(t: models.Transaction) -> bool:
+        return (t.symbol or "").strip().casefold() == wanted or t.asset_name.strip().casefold() == wanted
+
+    hits = [t for t in rows if t.kind == args.kind and named(t) and day in (t.date, t.plan_occurrence)]
+    hits = [t for t in hits if t.date == day] or hits
+    if len(hits) > 1 and args.amount is not None:
+        hits = [t for t in hits if abs(t.amount - args.amount) < 0.005] or hits
+    if len(hits) == 1:
+        return hits[0]
+    if not hits:
+        that_day = "; ".join(_entry_text(t) for t in rows if t.date == day) or "nothing"
+        raise LookupError(
+            f"No {args.kind} of {args.instrument} on {day} is in the ledger. On that day: {that_day}."
+        )
+    raise LookupError(
+        f"{len(hits)} entries match: {'; '.join(_entry_text(t) for t in hits)}. Say which by "
+        "its amount, as the picture shows it."
+    )
+
+
+def _ledger_body(tx: models.Transaction) -> dict:
+    """The body the ledger form PUTs for an entry opened and saved as it is
+    (`Portfolio.tsx`, `startEdit` then `submit`): a close with its proceeds and
+    nothing to price; any other entry with every box the form fills, the
+    ticker upper case, and the amount back only when the stored one is a
+    statement's (`crud.amount_was_stated`), empty, meaning "work it out",
+    otherwise. What the form has no box for (the paying account, the ISIN, the
+    class, the note) it does not send, and it stays as stored."""
+    if tx.kind == "close":
+        return {
+            "kind": "close",
+            "date": tx.date,
+            "institution_id": tx.institution_id,
+            "asset_name": tx.asset_name.strip(),
+            "symbol": (tx.symbol or "").strip().upper() or None,
+            "amount": tx.amount,
+            "currency": tx.currency.strip(),
+        }
+    return {
+        "kind": tx.kind,
+        "date": tx.date,
+        "institution_id": tx.institution_id,
+        "asset_name": tx.asset_name.strip(),
+        "symbol": (tx.symbol or "").strip().upper(),
+        "quantity": tx.quantity,
+        "unit_price": tx.unit_price,
+        "fees": tx.fees or 0,
+        "currency": tx.currency.strip(),
+        "price_currency": (tx.price_currency or tx.currency).strip(),
+        "amount": tx.amount if crud.amount_was_stated(tx) else None,
+    }
+
+
+@dataclass(frozen=True)
+class _LedgerChange:
+    """One card's change to the ledger, worked out once for the card and the
+    write, as `_Ledger` is for a new entry."""
+
+    tx: models.Transaction
+    body: dict | None  # the form's PUT body for a correction; None for a deletion
+    after: models.Transaction | None  # the entry as the correction leaves it, never stored
+
+
+def _refused_body(exc: ValidationError) -> str:
+    """A body the schema refuses, in its own sentences."""
+    return "; ".join(e["msg"].removeprefix("Value error, ") for e in exc.errors())
+
+
+def _ledger_change(db: Session, args: ChangeLedgerEntryArgs) -> _LedgerChange:
+    """The entry, and for a correction the body the form would send for it
+    and the entry as that body would leave it, or a refusal saying why."""
+    tx = _ledger_row(db, args)
+    if args.action == "delete":
+        return _LedgerChange(tx, None, None)
+    if tx.institution_id is None:
+        raise LookupError(
+            "This entry names no account: the ledger form on the Portfolio page saves it once "
+            "one is picked."
+        )
+    if tx.kind == "close" and any(
+        v is not None for v in (args.new_quantity, args.new_unit_price, args.new_fees)
+    ):
+        raise LookupError("A close has its day and what came back, and no units, price or fees.")
+    if (
+        args.new_date is not None
+        and args.new_date.isoformat() != tx.date
+        and tx.kind == "dividend"
+        and (tx.note or "").startswith(pac.AUTO_RECORDED)
+    ):
+        raise LookupError(
+            f"The dividend of {tx.date} keeps its day: the app recorded it on its ex-date and "
+            "finds it by that day. Correct its figures; a dividend paid on another day is "
+            "entered on the ledger form."
+        )
+    body = _ledger_body(tx)
+    for field_name, value in (
+        ("date", args.new_date.isoformat() if args.new_date else None),
+        ("quantity", args.new_quantity),
+        ("unit_price", args.new_unit_price),
+        ("fees", args.new_fees),
+        ("amount", args.new_amount),
+    ):
+        if value is not None:
+            body[field_name] = value
+    try:
+        changes = crud.transaction_as_corrected(db, tx, schemas.TransactionWrite(**body))
+    except ValidationError as exc:
+        raise LookupError(_refused_body(exc)) from exc
+    except crud.LedgerRateUnknown as exc:
+        raise LookupError(str(exc)) from exc
+    columns = {c.key: getattr(tx, c.key) for c in models.Transaction.__table__.columns}
+    return _LedgerChange(tx, body, models.Transaction(**{**columns, **changes}))
+
+
+def _units_text(quantity: float | None) -> str:
+    return "none" if not quantity else f"{quantity:g} units"
+
+
+def _price_text(value: float) -> str:
+    """A price as the reader typed it: two decimals at least, more when it
+    has them (a fund at 7.183 is not 7.18)."""
+    whole, _, cents = f"{value:.6f}".partition(".")
+    return f"{whole}.{cents.rstrip('0').ljust(2, '0')}"
+
+
+def _ledger_moves(db: Session, change: _LedgerChange) -> tuple[list[dict], list[str]]:
+    """What the change moves, read by the functions the pages read on the
+    ledger as it would leave it: the paying account's cash today, and for a
+    buy, a sell or a close the units of the entry's position and their
+    average cost, each a line of the diff when it moves. When the account's
+    latest balance or situation already holds the entry, the sentence that
+    says why its cash or its units do not move."""
+    tx, after = change.tx, change.after
+    today = dated.today()
+    conv = fx.Converter(db, on=today)
+    inputs = positions.load_projection_inputs(db)
+    ledger = [t for t in inputs.transactions if t.id != tx.id] + ([after] if after is not None else [])
+    days = {tx.date} | ({after.date} if after is not None else set())
+    lines: list[dict] = []
+    said: list[str] = []
+    base = conv.base
+
+    account_id = tx.cash_institution_id or tx.institution_id
+    account = crud.get_institution(db, account_id) if account_id is not None else None
+    if account is not None:
+        on = datetime.date.fromisoformat(today)
+        now = analytics.compute_cash_position(db, account.id, on, conv)
+        then = analytics.compute_cash_position(db, account.id, on, conv, transactions=ledger)
+        if round(now["projected"], 2) != round(then["projected"], 2):
+            lines.append({
+                "field": f"Cash at {account.name} today",
+                "now": f"{now['projected']:.2f} {base}",
+                "proposed": f"{then['projected']:.2f} {base}",
+            })
+        elif after is None or after.amount != tx.amount or after.date != tx.date:
+            anchor = now["anchor_date"]
+            if anchor is None:
+                said.append(f"{account.name} has no balance on record, so no cash is projected from it.")
+            elif all(d <= anchor.isoformat() for d in days):
+                said.append(
+                    f"{account.name}'s latest balance, of {anchor.isoformat()}, already holds it, so "
+                    "its cash today does not move."
+                )
+
+    holder = crud.get_institution(db, tx.institution_id) if tx.institution_id is not None else None
+    if tx.kind in ("buy", "sell", "close") and holder is not None:
+        what = tx.symbol or tx.asset_name
+
+        def position(projected):
+            return next(
+                (
+                    p for p in projected
+                    if p.institution_id == holder.id
+                    and (p.symbol == tx.symbol if tx.symbol else p.asset_name == tx.asset_name)
+                ),
+                None,
+            )
+
+        before = position(positions.project(db, conv, inputs=inputs))
+        later = position(positions.project(db, conv, inputs=replace(inputs, transactions=ledger)))
+        held = [p.quantity if p is not None else None for p in (before, later)]
+        if _units_text(held[0]) != _units_text(held[1]):
+            lines.append({
+                "field": f"{what} held at {holder.name}",
+                "now": _units_text(held[0]),
+                "proposed": _units_text(held[1]),
+            })
+        elif after is None or after.quantity != tx.quantity or after.date != tx.date:
+            snap = positions.latest_snapshot_by_institution(db, today).get(holder.id)
+            if snap is not None and all(d <= snap.date for d in days):
+                said.append(
+                    f"Its situation of {snap.date} at {holder.name} already holds its units, so "
+                    "they do not move."
+                )
+        costs = [
+            p.book_value / p.quantity if p is not None and p.quantity else None for p in (before, later)
+        ]
+        if None not in costs and f"{costs[0]:.2f}" != f"{costs[1]:.2f}":
+            lines.append({
+                "field": f"Average cost of {what} at {holder.name}",
+                "now": f"{costs[0]:.2f} {base}",
+                "proposed": f"{costs[1]:.2f} {base}",
+            })
+    return lines, said
+
+
+def _propose_ledger_change(db: Session, args: ChangeLedgerEntryArgs) -> Proposal:
+    """A ledger entry rewritten or deleted, so the diff: what changes on the
+    entry, what it moves, and what the catch-up does after it.
+
+    Its fingerprint is the entry as stored and everything the card says, the
+    figures it moves included: anything that would make the card say
+    something else makes it stale."""
+    change = _ledger_change(db, args)
+    tx = change.tx
+    what = tx.symbol or tx.asset_name
+    moves, why = _ledger_moves(db, change)
+    plan = db.get(models.AccumulationPlan, tx.plan_id) if tx.plan_id is not None else None
+    pac_buy = plan is not None and tx.kind == "buy" and bool(tx.plan_occurrence)
+
+    if change.after is None:
+        said = ["The entry goes, and nothing brings it back."]
+        diff = [{"field": "Entry", "now": _entry_text(tx), "proposed": "deleted"}, *moves]
+        if pac_buy:
+            others = sorted({
+                t.symbol or t.asset_name
+                for t in crud.get_transactions(db)
+                if t.id != tx.id and t.plan_id == tx.plan_id and t.plan_occurrence == tx.plan_occurrence
+            })
+            if others:
+                said.append(
+                    f"Its occurrence of {tx.plan_occurrence} keeps its other buy ({', '.join(others)}), "
+                    f'so the PAC "{plan.name}" does not buy {what} for it again.'
+                )
+            else:
+                said.append(f'The PAC "{plan.name}" will not buy its occurrence of {tx.plan_occurrence} again.')
+            if plan.carried_remainder:
+                source = (
+                    crud.get_institution(db, plan.source_institution_id)
+                    if plan.source_institution_id is not None
+                    else None
+                )
+                where = f"{source.name}'s cash" if source is not None else "the account's cash"
+                carried = f"{plan.carried_remainder:.2f} {plan.currency}"
+                said.append(f"The plan's carry, {carried}, goes to zero, and that money stays in {where}.")
+                diff.append({"field": f"Carried by {plan.name}", "now": carried, "proposed": f"0.00 {plan.currency}"})
+            said.append("If your broker did buy it, correct the entry with the figures from your statement instead.")
+        elif tx.kind == "dividend" and tx.symbol and tx.institution_id is not None:
+            holder = crud.get_institution(db, tx.institution_id)
+            said.append(
+                f"The app will not record a dividend of {tx.symbol} at {holder.name} on {tx.date} "
+                "again. If your broker paid it, correct it with the credit from your statement instead."
+            )
+        said.extend(why)
+        title = f"delete {tx.kind}: {_entry_text(tx)}"
+    else:
+        after = change.after
+        fields = [("Day", tx.date, after.date)]
+        if tx.kind != "close":
+            fields += [
+                ("Units", f"{tx.quantity:g}", f"{after.quantity:g}"),
+                ("Price", f"{_price_text(tx.unit_price)} {tx.price_currency}", f"{_price_text(after.unit_price)} {after.price_currency}"),
+                ("Fees", f"{tx.fees or 0:.2f} {tx.currency}", f"{after.fees or 0:.2f} {after.currency}"),
+            ]
+        fields.append(("Amount", f"{tx.amount:.2f} {tx.currency}", f"{after.amount:.2f} {after.currency}"))
+        if tx.estimated:
+            fields.append(("Estimated", "yes", "no"))
+        diff = [{"field": f, "now": now, "proposed": then} for f, now, then in fields if now != then]
+        if not diff:
+            # An estimated entry confirmed as it is still changes: it is no
+            # longer an estimate, and its row says so.
+            raise LookupError(f"The entry already says that: {_entry_text(tx)}. Nothing would change.")
+        diff.extend(moves)
+        said = [
+            "A correction: the entry takes these figures"
+            + (", and it is no longer marked estimated." if tx.estimated else ".")
+        ]
+        if (
+            crud.amount_was_stated(tx)
+            and args.new_amount is None
+            and (after.quantity, after.unit_price, after.fees) != (tx.quantity, tx.unit_price, tx.fees)
+        ):
+            said.append(
+                f"Its amount, {tx.amount:.2f} {tx.currency}, is one stated rather than worked out, so "
+                "it stays as it is, as the ledger form keeps it: say the new amount if it changed."
+            )
+        if pac_buy:
+            keeps = (
+                f'It stays the buy of the PAC "{plan.name}" for its occurrence of '
+                f"{tx.plan_occurrence}, so the next start does not buy that occurrence again"
+            )
+            if plan.carried_remainder:
+                keeps += (
+                    f", and the plan's carry, {plan.carried_remainder:.2f} {plan.currency}, stays as "
+                    "it is: the plan's own reckoning of what whole units could not place at the estimate"
+                )
+            said.append(keeps + ".")
+        if tx.kind == "dividend" and (tx.note or "").startswith(pac.AUTO_RECORDED):
+            said.append(f"Its day stays {tx.date}, the ex-date the app finds it by.")
+        said.extend(why)
+        title = f"correct {tx.kind}: {tx.date} {what}" + (
+            f", {tx.amount:.2f} → {after.amount:.2f} {tx.currency}" if after.amount != tx.amount else ""
+        )
+    stored = {c.key: getattr(tx, c.key) for c in models.Transaction.__table__.columns if c.key != "created_at"}
+    return Proposal(
+        title=title,
+        fingerprint=json.dumps({"entry": stored, "diff": diff, "said": said}, sort_keys=True, default=str),
+        confirmation="diff",
+        consequence=" ".join(said),
+        diff=diff,
+        touches=f"the {tx.kind} of {tx.date} {what}",
+    )
+
+
+def _change_ledger_entry(db: Session, args: ChangeLedgerEntryArgs) -> dict:
+    """The correction through the function the form's PUT calls, or the
+    deletion through the one both doors call."""
+    change = _ledger_change(db, args)
+    tx = change.tx
+    if change.body is None:
+        gone = _entry_text(tx)
+        crud.delete_transaction(db, tx.id)
+        return {"deleted": gone}
+    kept = crud.update_transaction(db, tx.id, schemas.TransactionWrite(**change.body))
+    return {
+        "entry": _entry_text(kept),
+        "amount": kept.amount,
+        "currency": kept.currency,
+        "fx_as_of": kept.fx_as_of,
+    }
+
+
+_LEDGER_LABELS = {
+    "action": "",
+    "date": "Entry of",
+    "kind": "Kind",
+    "instrument": "Instrument",
+    "amount": "Its amount",
+    "new_date": "New day",
+    "new_quantity": "New units",
+    "new_unit_price": "New price",
+    "new_fees": "New fees",
+    "new_amount": "New amount",
+}
+
+
+def _ledger_receipt(result: dict) -> list[tuple]:
+    """The entry as the ledger reads it now, or the one that went."""
+    if "deleted" in result:
+        return [("Deleted", result["deleted"], "text")]
+    return [
+        ("Now", result.get("entry"), "text"),
+        ("At the ECB rate of", result.get("fx_as_of"), "date"),
+    ]
+
+
+def _ledger_done(card: dict) -> str:
+    return {"correct": "Corrected", "delete": "Deleted"}.get(
+        (card.get("arguments") or {}).get("action"), "Corrected"
+    )
 
 
 # --- update_profile ----------------------------------------------------------
@@ -3595,6 +4057,22 @@ REGISTRY: dict[str, Tool] = {
             propose=_propose_transaction,
             labels=_TRANSACTION_LABELS,
             receipt=_transaction_receipt,
+        ),
+        Tool(
+            name="change_ledger_entry",
+            description=(
+                "Propose correcting one entry of their investment ledger with the figures of "
+                "their statement, or deleting it, as the ledger form on the Portfolio page "
+                "corrects and deletes one. The entry is named as the ledger in the picture "
+                "shows it. A PAC's buy corrected stays its occurrence's; deleted, the PAC does "
+                "not buy that occurrence again, and a dividend deleted is not recorded again."
+            ),
+            arguments=ChangeLedgerEntryArgs,
+            run=_change_ledger_entry,
+            propose=_propose_ledger_change,
+            labels=_LEDGER_LABELS,
+            receipt=_ledger_receipt,
+            done=_ledger_done,
         ),
         Tool(
             name="update_profile",

@@ -127,17 +127,35 @@ def _update(
     be worked out from zeroes. `also` is written whatever the request said, for
     the one thing an edit means by itself: correcting a ledger entry clears
     `estimated`.
+
+    What the edit writes is worked out by `_changes`, which a card reads to
+    show an edit before it is made (brief AO): one computation, written here or
+    shown there.
     """
     obj = db.get(model, obj_id)
     if obj is None:
         return None
+    return _apply(db, obj, _changes(db, obj, data, build=build, drop=drop, also=also))
+
+
+def _changes(
+    db: Session,
+    obj: object,
+    data: BaseModel,
+    *,
+    build: Build | None = None,
+    drop: tuple[str, ...] = (),
+    also: dict | None = None,
+) -> dict:
+    """The columns `_update` writes onto `obj` for `data`, worked out and not
+    written: see `_update` for what an absent key and a null each mean."""
     sent = data.model_fields_set
     row = {
         key: value if key in sent else getattr(obj, key)
         for key, value in _columns(data, drop=drop).items()
     }
     payload = row if build is None else build(db, row, sent)
-    return _apply(db, obj, {**_decided(data, payload), **(also or {})})
+    return {**_decided(data, payload), **(also or {})}
 
 
 def _decided(data: BaseModel, payload: dict) -> dict:
@@ -1109,19 +1127,53 @@ def get_transaction(db: Session, tx_id: int) -> models.Transaction | None:
     return db.get(models.Transaction, tx_id)
 
 
+# What an edit of a ledger entry is: its amount worked out again where the
+# request leaves it to be (`_transaction_columns`), and `estimated` cleared,
+# since the reader has confirmed or corrected it with real numbers.
+_TRANSACTION_EDIT = {"build": _transaction_columns, "also": {"estimated": False}}
+
+
 def update_transaction(
     db: Session, tx_id: int, data: schemas.TransactionCreate
 ) -> models.Transaction | None:
     """Overwrite a transaction with the payload. Editing marks it as no longer
     estimated: the user has confirmed/corrected it with real numbers."""
-    return _update(
-        db,
-        models.Transaction,
-        tx_id,
-        data,
-        build=_transaction_columns,
-        also={"estimated": False},
-    )
+    return _update(db, models.Transaction, tx_id, data, **_TRANSACTION_EDIT)
+
+
+def transaction_as_corrected(
+    db: Session, tx: models.Transaction, data: schemas.TransactionCreate
+) -> dict:
+    """The columns `update_transaction` would write onto `tx` for `data`, not
+    written: what the chat's card for a correction shows it moving, worked out
+    by the same function that writes it (brief AO). It can ask Frankfurter for
+    a day's rate, as the write does, for an entry across two currencies."""
+    return _changes(db, tx, data, **_TRANSACTION_EDIT)
+
+
+def amount_was_stated(tx: models.Transaction) -> bool:
+    """Whether a stored amount can only have come from a statement: the rule of
+    the ledger form's `statedAmount.wasStated`, which opens the debit box with
+    the stored figure when it is a statement's, and empty, meaning "work it
+    out", when the row derives it. The chat's card sends the amount back as
+    the form does, so it reads the rule here (brief AO); a change to one is a
+    change to both (`test_the_chat_corrects_and_deletes_a_ledger_entry.py`
+    pins them on the same cases as `tests/statedAmount.test.ts`).
+
+    Across two currencies the app stamps `fx_as_of` when it worked the figure
+    out, so an empty one is the reader's own. In one currency, a figure
+    further from what the row derives than half a cent (the backend's
+    rounding) and a hair can only have been typed. A close's proceeds are its
+    amount and are never derived."""
+    if tx.kind == "close":
+        return False
+    price = (tx.price_currency or "").strip()
+    if price and price != tx.currency.strip():
+        return tx.fx_as_of is None
+    gross = (tx.quantity or 0.0) * (tx.unit_price or 0.0)
+    fees = tx.fees or 0.0
+    derived = gross + fees if tx.kind == "buy" else max(gross - fees, 0.0)
+    return abs(tx.amount - derived) > 0.005 + 1e-9
 
 
 # The start of the reason kept for an occurrence whose buy the reader deleted

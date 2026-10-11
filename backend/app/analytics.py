@@ -126,6 +126,7 @@ def compute_cash_position(
     institution_id: int,
     as_of: datetime.date | None = None,
     conv: fx.Converter | None = None,
+    transactions: list[models.Transaction] | None = None,
 ) -> dict | None:
     """Project an institution's cash at `as_of` (default today) from its latest
     anchor on/before that date::
@@ -142,7 +143,12 @@ def compute_cash_position(
     added. One register can hold rows in several currencies — a multi-currency
     account is an ordinary thing — and adding them as stored is how an anchor
     of 1,250 dollars counted as 1,250 euro. Pass `conv` to share one rate load
-    across several registers."""
+    across several registers.
+
+    `transactions` stands for the ledger when given: the chat's card for a
+    correction or a deletion asks what the register would read with the entry
+    changed or gone (brief AO), from this function rather than a second copy
+    of its rule. Left out, the ledger is read from the database."""
     if as_of is None:
         as_of = datetime.date.today()
     if conv is None:
@@ -217,9 +223,8 @@ def compute_cash_position(
     # `currency` — the cash side, fixed on its day — and converts like any
     # other amount in this register.
     buys_out = sells_in = 0.0
-    for t in dated.events_after(
-        anchor, db.scalars(select(models.Transaction)), until=as_of_iso
-    ):
+    ledger = transactions if transactions is not None else db.scalars(select(models.Transaction))
+    for t in dated.events_after(anchor, ledger, until=as_of_iso):
         if (t.cash_institution_id or t.institution_id) != inst.id:
             continue
         if t.kind == "buy":

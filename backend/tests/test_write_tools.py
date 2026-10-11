@@ -765,6 +765,9 @@ def test_the_write_tools_do_not_run_when_the_model_calls_them(client):
         # Brief AO: a PAC's amount, as its form changes it
         # (test_the_chat_changes_a_pacs_amount.py).
         "change_pac_amount",
+        # And a ledger entry, corrected or deleted as the ledger form does it
+        # (test_the_chat_corrects_and_deletes_a_ledger_entry.py).
+        "change_ledger_entry",
     }
 
     # A buy names its institution, because one that does not is now refused

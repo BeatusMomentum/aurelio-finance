@@ -88,7 +88,8 @@ def test_the_prompt_says_what_no_card_does_yet_and_where(prompt):
         ("a debt and its balances", "Records, Debts"),
         # Its amount has a card since brief AO (`change_pac_amount`).
         ("a PAC's frequency, the day of its first buy or its funds, a new PAC, or ending one", "Records, Cash flow"),
-        ("correcting or deleting a ledger entry", "Portfolio, the ledger"),
+        # Correcting and deleting one have a card since brief AO (`change_ledger_entry`).
+        ("changing what a ledger entry is, its kind, its instrument, its account or its currencies", "Portfolio, the ledger"),
         ("correcting or deleting a transfer, or deleting a balance", "the account's page"),
         # A card's null keeps a field as it is (write_flow, write_goal).
         ("emptying a field of a line or a goal", "Records, Cash flow; Profile"),

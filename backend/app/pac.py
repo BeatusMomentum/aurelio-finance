@@ -783,6 +783,13 @@ def _follows_dividends(h: models.Holding) -> bool:
     return (h.asset_class or "") != "crypto"
 
 
+# How every dividend the catch-up records starts its note: where the row came
+# from, which no edit makes false. The ledger form reads it (`sameDividend.ts`,
+# `AUTO_STAMP`) and so does the chat's card for a correction, to keep such a
+# dividend on its ex-date (brief AO).
+AUTO_RECORDED = "Auto-recorded from market data"
+
+
 def execute_dividends(db: Session, as_of: datetime.date | None = None) -> dict:
     """Record a `dividend` transaction for every ex-date of every position that
     follows its dividends (`_follows_dividends`), from its snapshot anchor
@@ -923,7 +930,7 @@ def execute_dividends(db: Session, as_of: datetime.date | None = None) -> dict:
                         # on the row after the correction. The unit is the
                         # listing's: a figure per share without one is five pence
                         # or five pounds.
-                        note=f"Auto-recorded from market data: a dividend of {d['dps']} {paid_in} per share",
+                        note=f"{AUTO_RECORDED}: a dividend of {d['dps']} {paid_in} per share",
                     )
                     # Worked out before `_record_dividend` takes the write
                     # lock: for a dividend paid in another currency this is
