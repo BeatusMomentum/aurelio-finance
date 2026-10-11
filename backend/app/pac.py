@@ -63,7 +63,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from app import crud, fx, models, prices, schemas
-from app.analytics import STEP_MONTHS, recurrence
+from app.analytics import STEP_MONTHS, add_months, recurrence
 from app.database import commit, sole_writer
 from app import dated
 from app.positions import latest_snapshot_by_institution, project, replay
@@ -108,6 +108,33 @@ def _settled_months(db: Session, plan_id: int) -> set[str]:
     What it does not change is a frequency switched on a running plan: the
     months the new schedule adds were never bought, so they are, as before."""
     return {iso[:7] for iso in crud.get_plan_occurrences_settled(db, plan_id)}
+
+
+def first_unsettled(
+    db: Session, plan: models.AccumulationPlan, today: datetime.date
+) -> datetime.date | None:
+    """The first occurrence of `plan`'s schedule that its catch-up has not
+    settled (`_settled_months`): due already and not bought yet (today's, a
+    weekend's waiting for its session, one whose close did not answer), or
+    still to come. None when the plan has no first buy day, or no occurrence
+    left before its last day.
+
+    The catch-up reads the plan's amount when it buys, so this is the first
+    occurrence a change of amount reaches, which the chat's card names (brief
+    AO). Looked for up to thirteen months past today or the first buy, the
+    longest step a plan takes and a month more."""
+    if not plan.start_date:
+        return None
+    start = datetime.date.fromisoformat(plan.start_date)
+    done = _settled_months(db, plan.id)
+    return next(
+        (
+            occ
+            for occ in plan_occurrences(plan, add_months(max(today, start), 13))
+            if occ.isoformat()[:7] not in done
+        ),
+        None,
+    )
 
 
 def allocate(

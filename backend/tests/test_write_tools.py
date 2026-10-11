@@ -762,6 +762,9 @@ def test_the_write_tools_do_not_run_when_the_model_calls_them(client):
         # And the base, which asks the ECB's feed while it writes, so it walks
         # as the analysis does (test_the_chat_changes_the_base.py).
         "change_base_currency",
+        # Brief AO: a PAC's amount, as its form changes it
+        # (test_the_chat_changes_a_pacs_amount.py).
+        "change_pac_amount",
     }
 
     # A buy names its institution, because one that does not is now refused

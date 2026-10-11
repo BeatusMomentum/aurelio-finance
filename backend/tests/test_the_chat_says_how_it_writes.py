@@ -86,7 +86,8 @@ def test_the_prompt_says_what_no_card_does_yet_and_where(prompt):
         ("a situation and its holdings", "the account's page"),
         ("a real asset's later valuations", "Records, Real assets"),
         ("a debt and its balances", "Records, Debts"),
-        ("a PAC, its amount, its schedule and its funds", "Records, Cash flow"),
+        # Its amount has a card since brief AO (`change_pac_amount`).
+        ("a PAC's frequency, the day of its first buy or its funds, a new PAC, or ending one", "Records, Cash flow"),
         ("correcting or deleting a ledger entry", "Portfolio, the ledger"),
         ("correcting or deleting a transfer, or deleting a balance", "the account's page"),
         # A card's null keeps a field as it is (write_flow, write_goal).

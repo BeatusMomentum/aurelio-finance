@@ -1537,10 +1537,32 @@ def note_refused_refresh(db: Session, row: models.CompositionCache) -> None:
 # --- Accumulation plans (PAC) ---------------------------------------------
 
 
+class InstitutionMissing(LookupError):
+    """An institution a plan names does not exist: the PAC requests' 404,
+    said as `routers.deps.get_or_404` says it."""
+
+
+def _plan_institutions(db: Session, data: schemas.AccumulationPlanCreate) -> None:
+    """Refuse a plan naming an institution that does not exist: its source,
+    then each target's, in the order the request lists them.
+
+    It lived in the PAC router (`_require_linked_institutions`) until brief AO
+    (2026-10-11), when the chat's card began to save a plan too: here, the
+    form's two requests and the card are checked alike. An id left out is
+    skipped, as a plan the catch-up's tests build through
+    `AccumulationPlanCreate` may leave one out; the requests' schema
+    (`AccumulationPlanWrite`) requires both ends."""
+    for iid in (data.source_institution_id, *(t.institution_id for t in data.targets)):
+        if iid is not None and db.get(models.Institution, iid) is None:
+            raise InstitutionMissing(f"Institution {iid} not found")
+
+
 def create_accumulation_plan(
     db: Session, data: schemas.AccumulationPlanCreate
 ) -> models.AccumulationPlan:
-    """Create and persist an accumulation plan (dates stored as ISO strings)."""
+    """Create and persist an accumulation plan (dates stored as ISO strings),
+    or `InstitutionMissing`."""
+    _plan_institutions(db, data)
     plan = models.AccumulationPlan(**_columns(data, drop=("targets",)))
     plan.targets = _plan_targets(data)
     return _create(db, plan)
@@ -1578,6 +1600,10 @@ def get_accumulation_plan(
 def update_accumulation_plan(
     db: Session, plan_id: int, data: schemas.AccumulationPlanCreate
 ) -> models.AccumulationPlan | None:
+    """Write what the PAC form's Save sends onto a plan, or None if it is
+    gone, or `InstitutionMissing` (checked first, as the router did). The one
+    function the form's request and the chat's card call (brief AO)."""
+    _plan_institutions(db, data)
     obj = db.get(models.AccumulationPlan, plan_id)
     if obj is None:
         return None

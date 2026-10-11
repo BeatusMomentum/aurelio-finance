@@ -10,7 +10,7 @@ which `AccumulationPlanCreate` does not. See the schema for why the two differ.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app import crud, models, schemas
@@ -20,15 +20,11 @@ from app.routers.deps import get_or_404
 router = APIRouter(prefix="/api", tags=["accumulation_plans"])
 
 
-def _require_linked_institutions(db: Session, *institution_ids: int) -> None:
-    """404 if an institution the plan names does not exist.
-
-    It used to skip nulls, because a plan with no source and a target with no
-    institution were both allowed. `AccumulationPlanWrite` no longer allows
-    either, so there is no null left to skip and every id here is a claim about
-    a row."""
-    for iid in institution_ids:
-        get_or_404(db, models.Institution, iid)
+def _missing(exc: crud.InstitutionMissing) -> HTTPException:
+    """404 for an institution the plan names that does not exist. The check is
+    `crud`'s since brief AO, so the PAC form's requests and the chat's card
+    make it alike; its sentence is the one `get_or_404` says."""
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
 @router.post(
@@ -47,10 +43,10 @@ def create_accumulation_plan(
     held. Money moves from an account into a holding, and a plan that names
     neither end is describing a purchase nobody made — see the schema for the
     total it moved when it did."""
-    _require_linked_institutions(
-        db, payload.source_institution_id, *[t.institution_id for t in payload.targets]
-    )
-    return crud.create_accumulation_plan(db, payload)
+    try:
+        return crud.create_accumulation_plan(db, payload)
+    except crud.InstitutionMissing as exc:
+        raise _missing(exc)
 
 
 @router.get("/accumulation-plans", response_model=list[schemas.AccumulationPlanRead])
@@ -85,12 +81,12 @@ def update_accumulation_plan(
     The same requirement as the POST, and this is the door a plan saved without
     either end is repaired through: naming them is a two-field edit. The GET
     keeps returning such a plan unchanged, so it can be read before it is
-    fixed."""
-    _require_linked_institutions(
-        db, payload.source_institution_id, *[t.institution_id for t in payload.targets]
-    )
-    get_or_404(db, models.AccumulationPlan, plan_id)
-    return crud.update_accumulation_plan(db, plan_id, payload)
+    fixed. The institutions are checked first, then the plan, as before."""
+    try:
+        plan = crud.update_accumulation_plan(db, plan_id, payload)
+    except crud.InstitutionMissing as exc:
+        raise _missing(exc)
+    return plan if plan is not None else get_or_404(db, models.AccumulationPlan, plan_id)
 
 
 @router.delete(

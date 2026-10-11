@@ -95,7 +95,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import (
-    advisor, analytics, catalogue, chain, composition, crud, dated, fx, models, positions,
+    advisor, analytics, catalogue, chain, composition, crud, dated, fx, models, pac, positions,
     prices, questionnaire, schemas,
 )
 from app.database import unit_of_work
@@ -2625,6 +2625,213 @@ def _goal_done(card: dict) -> str:
     )
 
 
+# --- change_pac_amount -------------------------------------------------------------
+#
+# A PAC's amount, changed from its next occurrence as the PAC form's Save
+# changes it (brief AO): the whole plan as the form loads it with the amount
+# changed, through the function the form's request calls, which checks the
+# accounts the plan names. What the card adds is what the form leaves the
+# reader to work out: the occurrence the new amount buys first, whether that
+# one is due already, and the carry the change sets to zero. The schedule and
+# the funds stay with the form: a running plan's schedule edited can write
+# buys before today (the record's bullet of 2026-10-05), which no card does.
+
+
+class ChangePacAmountArgs(BaseModel):
+    """What a PAC buys with, from its next occurrence on."""
+
+    plan: str = Field(..., min_length=1, description="The PAC, as the picture names it.")
+    amount: float = Field(
+        ..., gt=0, description="What each occurrence buys with from now on, in the plan's currency."
+    )
+    first_buy: datetime.date | None = Field(
+        default=None,
+        description=(
+            "Only when two PACs share the name: the day of its first buy, as the "
+            "picture shows it."
+        ),
+    )
+
+
+def _plan_named(db: Session, args: ChangePacAmountArgs) -> models.AccumulationPlan:
+    """The plan on record the card is about, by name, or a refusal the model
+    can act on."""
+    plans = crud.get_accumulation_plans(db)
+    wanted = args.plan.strip().casefold()
+    hits = [p for p in plans if p.name.strip().casefold() == wanted]
+    if len(hits) > 1 and args.first_buy is not None:
+        hits = [p for p in hits if p.start_date == args.first_buy.isoformat()] or hits
+    if len(hits) == 1:
+        return hits[0]
+    if not hits:
+        have = ", ".join(p.name for p in plans) or "none"
+        raise LookupError(f"There is no PAC called {args.plan!r}. On record: {have}.")
+    raise LookupError(
+        f"{len(hits)} PACs are called {args.plan!r}: say which by the day of its first "
+        "buy (first_buy), as the picture shows it."
+    )
+
+
+def _plan_body(plan: models.AccumulationPlan) -> dict:
+    """The body the PAC form's Save sends for a plan as stored, when nothing in
+    it is touched (`CashFlow.tsx`, `startEdit` then `submit`): a blank
+    frequency or fill model as the form's defaults, every target that has a
+    ticker, no note."""
+    return {
+        "name": plan.name.strip(),
+        "amount": plan.amount,
+        "currency": plan.currency,
+        "frequency": plan.frequency or "monthly",
+        "execution": plan.execution or "whole_units",
+        "source_institution_id": plan.source_institution_id,
+        "start_date": plan.start_date or None,
+        "end_date": plan.end_date or None,
+        "targets": [
+            {
+                "symbol": t.symbol.strip(),
+                "isin": (t.isin or "").strip().upper() or None,
+                "asset_name": (t.asset_name or "").strip() or None,
+                "institution_id": t.institution_id,
+                "weight": t.weight if t.weight > 0 else 1,
+            }
+            for t in plan.targets
+            if (t.symbol or "").strip()
+        ],
+    }
+
+
+@dataclass(frozen=True)
+class _PacChange:
+    """One card's change of amount, worked out once for the card and the write."""
+
+    plan: models.AccumulationPlan
+    body: dict  # the PAC form's body, the amount changed
+    first: datetime.date  # the first occurrence the new amount buys
+    due: str  # that occurrence: "due" already, "today", or "later"
+
+
+def _pac_change(db: Session, args: ChangePacAmountArgs) -> _PacChange:
+    """The plan, the body the form would send for it, and the occurrence the
+    new amount reaches first, or a refusal saying why there is none."""
+    plan = _plan_named(db, args)
+    # The form will not save a plan with either end missing, and says so; the
+    # card says where it is saved with them.
+    if plan.source_institution_id is None:
+        raise LookupError(
+            f"{plan.name} does not say which account funds it: name it on the PAC's "
+            "form, under Records, Cash flow, which saves the plan only with one."
+        )
+    homeless = [t.symbol for t in plan.targets if t.institution_id is None]
+    if homeless:
+        raise LookupError(
+            f"{plan.name} does not say where {', '.join(homeless)} is held: name it on the "
+            "PAC's form, under Records, Cash flow."
+        )
+    if args.amount == plan.amount:
+        raise LookupError(
+            f"{plan.name} buys with {plan.amount:.2f} {plan.currency} already: nothing would change."
+        )
+    today = datetime.date.fromisoformat(dated.today())
+    first = pac.first_unsettled(db, plan, today)
+    if first is None:
+        last = f" (its last day is {plan.end_date})" if plan.end_date else ""
+        raise LookupError(
+            f"{plan.name} has no occurrence left to buy{last}: a new amount would buy nothing."
+        )
+    body = {**_plan_body(plan), "amount": args.amount}
+    schemas.AccumulationPlanWrite(**body)
+    due = "due" if first < today else "today" if first == today else "later"
+    return _PacChange(plan, body, first, due)
+
+
+def _propose_pac_amount(db: Session, args: ChangePacAmountArgs) -> Proposal:
+    """A plan rewritten, so the diff: the amount, and the carry the change
+    sets to zero; what the change reaches, and what it leaves to the form.
+
+    Its fingerprint is the plan as the form would send it, its carry, the
+    occurrences it has settled and the one the card names with its state: the
+    catch-up buying that occurrence at the old amount between the card and its
+    confirmation makes the card say something no longer true."""
+    change = _pac_change(db, args)
+    plan, first, cur = change.plan, change.first.isoformat(), change.plan.currency
+    new = f"{args.amount:.2f} {cur}"
+    fractional = (plan.execution or "whole_units") == "fractional"
+    carried = plan.carried_remainder or 0.0
+    diff = [{"field": "Amount per occurrence", "now": f"{plan.amount:.2f} {cur}", "proposed": new}]
+    if not fractional and carried:
+        diff.append({"field": "Carried", "now": f"{carried:.2f} {cur}", "proposed": f"0.00 {cur}"})
+    said = [f"From its occurrence of {first} on, each occurrence of {plan.name} buys with {new}."]
+    if change.due == "due":
+        said.append(
+            "That occurrence is due and not bought yet (it waits for its close, or for the "
+            "market to answer), so the next start buys it with the new amount."
+        )
+    elif change.due == "today":
+        said.append(
+            "That occurrence is today's: the first start after today's close buys it with "
+            "the new amount."
+        )
+    said.append("The occurrences already bought keep their buys.")
+    if fractional:
+        said.append("A fractional plan invests exactly its amount, so it carries nothing.")
+    elif carried:
+        source = crud.get_institution(db, plan.source_institution_id)
+        said.append(
+            f"The {carried:.2f} {cur} carried now (what whole units could not place) goes to "
+            "zero with the change, as a change of amount on the PAC's form does: that money "
+            f"never left {source.name}'s cash, and it stays there."
+        )
+    said.append(
+        "Its frequency, the day of its first buy and its funds stay as they are: they "
+        "change on the PAC's form, under Records, Cash flow, where a running plan's "
+        "schedule, once edited, can add buys before today."
+    )
+    fingerprint = json.dumps(
+        {
+            "plan": _plan_body(plan),
+            "carried": carried,
+            "settled": sorted(crud.get_plan_occurrences_settled(db, plan.id)),
+            "first": first,
+            "due": change.due,
+        },
+        sort_keys=True,
+    )
+    return Proposal(
+        title=f"change PAC amount: {plan.name}, {plan.amount:.2f} → {new} from {first}",
+        fingerprint=fingerprint,
+        confirmation="diff",
+        consequence=" ".join(said),
+        diff=diff,
+        touches=f'the PAC "{plan.name}"',
+    )
+
+
+def _change_pac_amount(db: Session, args: ChangePacAmountArgs) -> dict:
+    """The plan, through the function the form's request calls."""
+    change = _pac_change(db, args)
+    plan = crud.update_accumulation_plan(
+        db, change.plan.id, schemas.AccumulationPlanWrite(**change.body)
+    )
+    return {
+        "plan": plan.name,
+        "amount": plan.amount,
+        "currency": plan.currency,
+        "from": change.first.isoformat(),
+        "carried": plan.carried_remainder,
+    }
+
+
+_PAC_AMOUNT_LABELS = {"plan": "PAC", "amount": "New amount", "first_buy": ""}
+
+
+def _pac_amount_receipt(result: dict) -> list[tuple]:
+    return [
+        ("Each occurrence buys with", result.get("amount"), "amount", result.get("currency")),
+        ("From the occurrence of", result.get("from"), "date"),
+        ("Carried now", result.get("carried"), "amount", result.get("currency")),
+    ]
+
+
 # --- change_base_currency ----------------------------------------------------------
 #
 # The currency every total is shown in, changed as the Profile page's Save
@@ -3471,6 +3678,21 @@ REGISTRY: dict[str, Tool] = {
             labels=_GOAL_LABELS,
             receipt=_goal_receipt,
             done=_goal_done,
+        ),
+        Tool(
+            name="change_pac_amount",
+            description=(
+                "Propose changing what one of their PACs buys with, from its next "
+                "occurrence on, as the PAC's form under Records, Cash flow changes the "
+                "amount. The card names the first occurrence the new amount buys and what "
+                "happens to the carry; the plan's schedule and funds are not changed here."
+            ),
+            arguments=ChangePacAmountArgs,
+            run=_change_pac_amount,
+            propose=_propose_pac_amount,
+            labels=_PAC_AMOUNT_LABELS,
+            receipt=_pac_amount_receipt,
+            done="Changed",
         ),
         Tool(
             name="change_base_currency",

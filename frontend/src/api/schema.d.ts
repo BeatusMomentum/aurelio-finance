@@ -57,7 +57,7 @@ export interface paths {
          *     The same requirement as the POST, and this is the door a plan saved without
          *     either end is repaired through: naming them is a two-field edit. The GET
          *     keeps returning such a plan unchanged, so it can be read before it is
-         *     fixed.
+         *     fixed. The institutions are checked first, then the plan, as before.
          */
         put: operations["update_accumulation_plan_api_accumulation_plans__plan_id__put"];
         post?: never;
