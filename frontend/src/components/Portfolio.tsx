@@ -48,6 +48,7 @@ import {
   offerLine,
   olderLine,
 } from "./sameDividend";
+import { deleteQuestion } from "./ledgerDelete";
 import { marks, refusal, transaction } from "./required";
 import type { Focus } from "../nav";
 
@@ -1408,7 +1409,10 @@ function BuysSection({
   }
 
   async function remove(t: Transaction) {
-    if (!window.confirm(`Delete ${t.kind} "${t.asset_name}" of ${t.date}?`)) return;
+    // What follows the press too: the catch-up leaves a deleted entry deleted
+    // (brief AO), and a PAC's buy or a dividend is better corrected when the
+    // broker did make it (`ledgerDelete.ts`).
+    if (!window.confirm(deleteQuestion(t, items, fmtDate))) return;
     setError(null);
     try {
       await deleteTransaction(t.id);

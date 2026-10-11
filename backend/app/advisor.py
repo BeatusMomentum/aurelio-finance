@@ -247,15 +247,33 @@ def _plan_executed(db: Session, plan, txs: list) -> str:
     The occurrence and the day can differ: an occurrence on a Sunday is bought
     at Monday's close and dated Monday (brief AJ). The picture said the last
     execution was the Sunday and listed buys on the Monday with nothing tying
-    them, and the chat offered to delete "one of the two" as a duplicate."""
+    them, and the chat offered to delete "one of the two" as a duplicate.
+
+    An occurrence settled without a buy is one of two things since brief AO:
+    it ran and could not buy a unit, its money carried; or the reader deleted
+    its buy, and the plan does not buy it again (`crud.delete_transaction`).
+    Said apart, since the first sentence is false of the second."""
     executed = crud.get_plan_occurrences_executed(db, plan.id)
-    unfilled = len(crud.get_plan_occurrences_settled(db, plan.id) - executed)
+    settled = [u for u in plan.unfilled_occurrences if u.occurrence not in executed]
+    deleted = sorted(u.occurrence for u in settled if crud.deleted_from_the_ledger(u.reason))
+    unfilled = len(settled) - len(deleted)
     nothing = (
         f"{unfilled} occurrence{'' if unfilled == 1 else 's'} ran and bought nothing, "
         "their money waiting with what is carried."
     )
+    gone = ""
+    if len(deleted) == 1:
+        gone = (
+            f" The buy of its occurrence of {deleted[0]} was deleted from the ledger, so it "
+            "does not buy that occurrence again."
+        )
+    elif deleted:
+        gone = (
+            f" The buys of its occurrences of {', '.join(deleted)} were deleted from the "
+            "ledger, so it does not buy those occurrences again."
+        )
     if not executed:
-        return "No occurrence has bought anything yet." + (f" {nothing}" if unfilled else "")
+        return "No occurrence has bought anything yet." + (f" {nothing}" if unfilled else "") + gone
     last = max(executed)
     bought = ", ".join(
         sorted({t.date for t in txs if t.plan_id == plan.id and t.plan_occurrence == last})
@@ -266,7 +284,7 @@ def _plan_executed(db: Session, plan, txs: list) -> str:
         "entries made by this PAC: each occurrence's own execution, never a "
         "second purchase of the same thing."
     )
-    return said + (f" Besides, {nothing}" if unfilled else "")
+    return said + (f" Besides, {nothing}" if unfilled else "") + gone
 
 
 def _settles(t, named: dict[int, str]) -> str:

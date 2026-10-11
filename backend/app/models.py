@@ -775,8 +775,10 @@ class AccumulationPlan(Base):
 
 
 class PlanUnfilledOccurrence(Base):
-    """An occurrence that ran, put its contribution into the carry, and bought
-    nothing.
+    """An occurrence settled without a buy: one that ran, put its contribution
+    into the carry, and bought nothing; or, since brief AO, one whose buy the
+    reader deleted from the ledger, its reason starting with
+    `crud.DELETED_FROM_THE_LEDGER`.
 
     Being finished used to be DERIVED: an occurrence was done if a Transaction
     carried its key. That is the right question for "did this occurrence buy"
@@ -788,9 +790,17 @@ class PlanUnfilledOccurrence(Base):
     100 contributions. The catch-up runs at every app start, so the trigger was
     restarting the app.
 
-    Only unfilled occurrences live here. One that bought is still recognised by
-    its transactions, so deleting an auto-created buy still puts its occurrence
-    back in the queue — which is how a user asks for it to be done again.
+    One that bought is recognised by its transactions. Deleting the last of
+    them used to put the occurrence back in the queue, deliberately: it was
+    how a user asked for it to be done again. Brief AO ended that (the
+    reader's choice, 2026-10-11): the next start bought it again with the
+    plan's carry as it then stood, which already held what the deleted buy
+    left, so that money was spent or carried twice (measured on copies of the
+    test database with an invented plan), and a broker's buy entered by hand in
+    its place was doubled. So the deletion settles the occurrence here
+    (`crud.delete_transaction`), it is never bought again, and doing it again
+    is a correction of its buy. Such a row put nothing into the carry: the
+    deletion sets the carry to zero, and the money stays in the account.
 
     A priced failure records NOTHING, deliberately: it did not run, it could
     not. Its contribution was never touched and it must come back. Those two

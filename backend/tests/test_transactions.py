@@ -935,16 +935,21 @@ def test_a_plan_never_spends_more_than_it_has_been_given(client, monkeypatch):
         assert round(spent + carry, 2) == due, f"{as_of}: {spent} + {carry} != {due}"
 
 
-def test_deleting_an_auto_created_buy_puts_its_occurrence_back_in_the_queue(
-    client, monkeypatch
-):
-    """The asymmetry is deliberate, and it is the reason only UNFILLED
-    occurrences get a record of their own.
+def test_deleting_an_auto_created_buy_settles_its_occurrence_as_deleted(client, monkeypatch):
+    """Deleting the buy of an occurrence used to put the occurrence back in
+    the queue, and that was deliberate: it was how a saver said "not this one,
+    do it again". Brief AO ended it, by the reader's choice (2026-10-11): the
+    next start bought the occurrence again with the plan's carry as it then
+    stood, which already held what the deleted buy left, so that money was
+    spent or carried twice, and a broker's buy entered in its place was
+    doubled (measured on copies of the test database). The occurrence now
+    stays settled, as deleted by the reader, the carry goes to zero, and doing
+    it again is a correction of its buy
+    (tests/test_a_deleted_entry_stays_deleted.py).
 
-    An occurrence that bought is still recognised by its transactions, so
-    removing the buy is how a saver says "not this one, do it again". An
-    occurrence that bought nothing has no transaction to remove — its record is
-    the only thing that remembers it ran, and it is not a buy to be undone."""
+    An occurrence that bought nothing still keeps its own record, with the
+    reason it bought nothing; a deleted one shares the table, its reason
+    saying it was deleted."""
     iid = _institution(client)
     _plan(client, iid, amount=100, start="2026-01-15")
     monkeypatch.setattr(prices, "get_price_on", _fake_price(150.0))
@@ -960,11 +965,14 @@ def test_deleting_an_auto_created_buy_puts_its_occurrence_back_in_the_queue(
 
     with SessionLocal() as db:
         crud.delete_transaction(db, tx_id)
-        assert crud.get_plan_occurrences_settled(db, plan_id) == {"2026-01-15"}
+        assert crud.get_plan_occurrences_settled(db, plan_id) == {"2026-01-15", "2026-02-15"}
+        plan = crud.get_accumulation_plans(db)[0]
+        assert plan.carried_remainder == 0.0
+        deleted = [u for u in plan.unfilled_occurrences if u.occurrence == "2026-02-15"]
+        assert [crud.deleted_from_the_ledger(u.reason) for u in deleted] == [True]
 
     with SessionLocal() as db:
-        again = pac.execute_due(db, as_of=as_of)["created"]
-        assert [t.plan_occurrence for t in again] == ["2026-02-15"]
+        assert pac.execute_due(db, as_of=as_of)["created"] == []
 
 
 def test_an_unfilled_occurrence_keeps_the_reason_it_bought_nothing(client, monkeypatch):

@@ -845,7 +845,8 @@ def execute_dividends(db: Session, as_of: datetime.date | None = None) -> dict:
             # Strictly after the anchor, the cut `get_dividends_since` makes:
             # the situation already accounts for its own day.
             divs = [d for d in window.dividends if d["date"] > snap.date]
-            done = crud.get_dividend_dates_recorded(db, inst_id, h.symbol)
+            # Recorded, or deleted by the reader, which stays deleted (brief AO).
+            done = crud.get_dividend_dates_settled(db, inst_id, h.symbol)
             position_txs = dated.events_after(
                 snap,
                 (
@@ -950,9 +951,10 @@ def _record_dividend(
     brief X measured it, 10 trials of 10, with both held between the question
     and the write. Asked here, the second finds the first one's row and writes
     nothing; the first reports it. Any dividend row on that account, ticker and
-    ex-date counts, the reader's own included, exactly as `done` does."""
+    ex-date counts, the reader's own included, and so does one the reader
+    deleted from that day, exactly as `done` does."""
     with sole_writer(db):
-        if ex_date in crud.get_dividend_dates_recorded(db, institution_id, symbol):
+        if ex_date in crud.get_dividend_dates_settled(db, institution_id, symbol):
             return None
         return crud.store_transaction(db, columns, estimated=True)
 

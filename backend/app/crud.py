@@ -24,7 +24,7 @@ from sqlalchemy import delete, func, select, union, update
 from sqlalchemy.orm import Session, selectinload
 
 from app import dated, fx, models, schemas
-from app.database import commit
+from app.database import commit, unit_of_work
 
 if TYPE_CHECKING:  # `positions` imports this module for the price cache
     from app.positions import Position
@@ -1124,8 +1124,88 @@ def update_transaction(
     )
 
 
+# The start of the reason kept for an occurrence whose buy the reader deleted
+# (`delete_transaction`): what tells it from one that ran and bought nothing,
+# which shares its table. Read by the picture, and pinned by the tests.
+DELETED_FROM_THE_LEDGER = "Its buy was deleted from the ledger"
+
+# A dividend deleted from the ledger, remembered so the catch-up does not
+# record one again on that account, ticker and day: a row of `settings`, as
+# the catch-up's other memories are (`pac._DIVIDENDS_ASKED`), its value the
+# reader's day of the deletion. Not a table of its own: that would be a
+# migration on the reader's real money for one fact a deletion.
+_DIVIDEND_DELETED = "dividend_deleted:{institution_id}:{symbol}:{day}"
+
+
+def deleted_from_the_ledger(reason: str | None) -> bool:
+    """Whether an occurrence settled without a buy is one whose buy the reader
+    deleted, rather than one that ran and could not buy a unit."""
+    return (reason or "").startswith(DELETED_FROM_THE_LEDGER)
+
+
 def delete_transaction(db: Session, tx_id: int) -> bool:
-    return _delete(db, db.get(models.Transaction, tx_id))
+    """Delete a ledger entry, for the ledger form's Delete and the chat's card
+    alike, and make the catch-up leave it deleted. True if it existed.
+
+    A deletion stays a deletion (brief AO, the reader's choice, 2026-10-11).
+    Until then deleting a PAC's buy opened its occurrence again and the next
+    start bought it again, at that day's close, with the plan's amount and
+    carry as they were then; the carry already held what the deleted buy
+    left, so that money was spent or carried twice (measured on copies of the
+    test database with an invented plan: its carry 6.18 too high once its last
+    occurrence was bought again, 10.62 once its first was), and a broker's buy
+    entered by hand in its place was doubled. A
+    dividend the catch-up recorded came back the same way. So, in one unit of
+    work with the deletion:
+
+    - The last buy of an occurrence leaves that occurrence settled, as deleted
+      by the reader (`DELETED_FROM_THE_LEDGER`), so the catch-up never buys it
+      again; the redo is a correction of the buy. One leg of several leaves it
+      settled by the others, as it always did.
+    - Any of a plan's buys deleted sets the plan's carry to zero, as a change
+      of its amount does: it was measured against buys that are gone, and that
+      money never left the account's cash.
+    - A dividend deleted is remembered by its account, ticker and day
+      (`get_dividend_dates_settled`), any dividend row there having settled the
+      day for the catch-up, the reader's own included.
+
+    The row goes first, so the questions after it are asked holding SQLite's
+    write lock, as `database.sole_writer` would hold it; this one cannot take
+    that lock itself, since the chat's card runs inside a unit of work of its
+    own. And the catch-up asks its "settled?" again under the lock, so it
+    sees the buy or the record, never neither."""
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+    tx = db.get(models.Transaction, tx_id)
+    if tx is None:
+        return False
+    with unit_of_work(db):
+        db.delete(tx)
+        db.flush()
+        plan = db.get(models.AccumulationPlan, tx.plan_id) if tx.plan_id is not None else None
+        if plan is not None and tx.kind == "buy" and tx.plan_occurrence:
+            plan.carried_remainder = 0.0
+            if tx.plan_occurrence not in get_plan_occurrences_settled(db, plan.id):
+                db.add(
+                    models.PlanUnfilledOccurrence(
+                        plan_id=plan.id,
+                        occurrence=tx.plan_occurrence,
+                        reason=(
+                            f"{DELETED_FROM_THE_LEDGER} on {dated.today()}: its buy of {tx.date} "
+                            f"({tx.quantity:g} x {tx.symbol}) is gone, and the plan does not "
+                            "buy this occurrence again."
+                        ),
+                    )
+                )
+        if tx.kind == "dividend" and tx.symbol and tx.institution_id is not None:
+            key = _DIVIDEND_DELETED.format(
+                institution_id=tx.institution_id, symbol=tx.symbol, day=tx.date
+            )
+            remembered = sqlite_insert(models.Setting).values(key=key, value=dated.today())
+            db.execute(
+                remembered.on_conflict_do_update(index_elements=["key"], set_={"value": dated.today()})
+            )
+    return True
 
 
 def get_plan_occurrences_executed(db: Session, plan_id: int) -> set[str]:
@@ -1165,13 +1245,45 @@ def get_dividend_dates_recorded(
     db: Session, institution_id: int | None, symbol: str
 ) -> set[str]:
     """Ex-dates already recorded as dividend transactions for a position
-    (institution + symbol) — the idempotency key for the dividend catch-up."""
+    (institution + symbol)."""
     stmt = select(models.Transaction.date).where(
         models.Transaction.kind == "dividend",
         models.Transaction.symbol == symbol,
         models.Transaction.institution_id == institution_id,
     )
     return set(db.scalars(stmt))
+
+
+def get_dividend_dates_deleted(
+    db: Session, institution_id: int | None, symbol: str
+) -> set[str]:
+    """The days a dividend of this position was deleted from the ledger on
+    (`delete_transaction`). One read, by the key's start; a key whose rest is
+    not a day belongs to another ticker that starts like this one."""
+    prefix = _DIVIDEND_DELETED.format(institution_id=institution_id, symbol=symbol, day="")
+    keys = db.scalars(
+        select(models.Setting.key).where(models.Setting.key.startswith(prefix, autoescape=True))
+    )
+    days = set()
+    for key in keys:
+        rest = key[len(prefix):]
+        try:
+            days.add(datetime.date.fromisoformat(rest).isoformat())
+        except ValueError:
+            continue
+    return days
+
+
+def get_dividend_dates_settled(
+    db: Session, institution_id: int | None, symbol: str
+) -> set[str]:
+    """The ex-dates the dividend catch-up is finished with for a position: a
+    dividend recorded on that day, or one deleted from it, which stays deleted
+    (brief AO). The idempotency key of the dividend catch-up, as
+    `get_plan_occurrences_settled` is the PAC's."""
+    return get_dividend_dates_recorded(db, institution_id, symbol) | get_dividend_dates_deleted(
+        db, institution_id, symbol
+    )
 
 
 # --- Price cache (last fetched market price per symbol) -------------------

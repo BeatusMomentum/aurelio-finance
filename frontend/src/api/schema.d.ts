@@ -1446,7 +1446,13 @@ export interface paths {
          */
         put: operations["update_transaction_api_transactions__tx_id__put"];
         post?: never;
-        /** Delete Transaction */
+        /**
+         * Delete Transaction
+         * @description Delete an entry, and the catch-up leaves it deleted: a PAC's occurrence
+         *     whose last buy goes stays settled and is never bought again, the plan's
+         *     carry going to zero; a dividend is not recorded again on its day. The chat's
+         *     card deletes through the same function (`crud.delete_transaction`).
+         */
         delete: operations["delete_transaction_api_transactions__tx_id__delete"];
         options?: never;
         head?: never;
