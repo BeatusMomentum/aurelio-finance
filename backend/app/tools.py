@@ -902,6 +902,54 @@ def _settled_position(
     )
 
 
+def _no_dividend_beside_an_estimated_one(
+    db: Session, institution: models.Institution, symbol: str, day: datetime.date
+) -> None:
+    """Refuse a dividend the app may have recorded already, naming it and its
+    correction, or do nothing.
+
+    The catch-up records a dividend on its ex-date at the market's gross
+    figure, marked estimated, for the reader to correct with the broker's
+    credit; a second row for the same dividend was counted twice by the cash,
+    the dividends collected and the tax panel (measured by brief AI). The
+    ledger form offers the correction of every still-estimated dividend of the
+    same account and ticker dated on or before the one typed, since the
+    payment follows the ex-date (`sameDividend.estimatedDividends`, the rule
+    read here), and never refuses: a special dividend is real. The chat
+    refuses instead (brief AO, the reader's answer of 2026-10-10), since no one
+    looks at the row before its card is drawn, and says that a genuine second
+    dividend is entered on the form, which offers the correction first."""
+    wanted = symbol.casefold()
+    estimated = [
+        t for t in crud.get_transactions(db)
+        if t.kind == "dividend" and t.estimated and t.institution_id == institution.id
+        and (t.symbol or "").casefold() == wanted and t.date <= day.isoformat()
+    ]
+    if not estimated:
+        return
+    form = (
+        "A genuine second dividend, such as a special one, is entered on the ledger form on "
+        "the Portfolio page, which offers the same correction first."
+    )
+    if len(estimated) == 1:
+        (t,) = estimated
+        raise LookupError(
+            f"{symbol} at {institution.name} already has a dividend the app recorded on {t.date}: "
+            f"{t.amount:.2f} {t.currency}, the market's gross figure, still estimated. If this is "
+            "that dividend, correct it with their figures through `change_ledger_entry`, since a "
+            f"second row would count it twice. {form}"
+        )
+    named = "; ".join(f"{t.date}, {t.amount:.2f} {t.currency}" for t in estimated[:3])
+    older = len(estimated) - 3
+    more = f", and {older} older" if older > 0 else ""
+    raise LookupError(
+        f"{symbol} at {institution.name} already has dividends the app recorded, the market's "
+        f"gross figures, still estimated: {named}{more}. If this is one of them, correct it with "
+        "their figures through `change_ledger_entry`, since a second row would count it twice. "
+        f"{form}"
+    )
+
+
 def _ledger_entry(db: Session, args: RecordTransactionArgs) -> _Ledger:
     """One entry, resolved: the names turned into rows, the shape checked by
     the same schema the form posts through, and the cash figure taken from the
@@ -957,6 +1005,8 @@ def _ledger_entry(db: Session, args: RecordTransactionArgs) -> _Ledger:
             f"moves against a real account, and an entry that names none "
             f"spends money nothing ever loses. On record: {have}."
         )
+    if args.kind == "dividend" and args.symbol:
+        _no_dividend_beside_an_estimated_one(db, institution, args.symbol.strip(), args.date)
     create = schemas.TransactionCreate(
         kind=args.kind,
         date=args.date,
