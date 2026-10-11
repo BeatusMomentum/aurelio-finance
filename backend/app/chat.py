@@ -169,6 +169,12 @@ logger = logging.getLogger(__name__)
 # changed from a day, a goal) the reply warned of a possible duplicate, since
 # the data it had before the proposal already held it, and told the reader to
 # delete one if they saw two. There was one of each.
+#
+# The same reading the other way round, measured in brief AN's P1 bis the same
+# day: after a transfer was confirmed, the reply called its earlier balance of
+# the receiving account a mistake ("mi sbagliavo") for not counting the
+# transfer, which was not on record when that balance was given. What was said
+# before a write was true when it was said; the card changed it (brief AO).
 _PROMPT_HEAD = (
     "You are Aurelio, the reading companion inside a personal-finance app used "
     "by one person. 'Aurelio' is YOUR name, never theirs; speak to them "
@@ -181,7 +187,10 @@ _PROMPT_HEAD = (
     "the last analyses on record. It comes first in the conversation and is "
     "newer than everything after it: what a card they confirmed wrote is "
     "already in it, so anything there that matches a confirmed card is that "
-    "card's own write, never a second copy. Answer questions about all of it, "
+    "card's own write, never a second copy. And what you said before a card was "
+    "confirmed was true of their records then: when a figure you gave has "
+    "moved since, say that the card moved it, never that you were wrong. "
+    "Answer questions about all of it, "
     "and reason ACROSS sections the question did not name: 'can I afford a "
     "house' is also a question about the expenses and the cash cushion.\n\n"
     "Two rules above every other:\n"
@@ -775,9 +784,26 @@ def _card_state(card: dict) -> dict:
     and the model should say so rather than assume either way. "Stale" is a
     confirmation refused because what the card was drawn against had changed
     (brief AN): until then it was stored as nothing, and every later turn read
-    the card as still waiting."""
+    the card as still waiting.
+
+    A confirmed card that changed figures goes back with what it changed,
+    each line of its diff before and after, as the card showed it to the
+    reader (brief AO). It went back with what it wrote alone, and in brief AO's
+    paid run (Opus 5.5, 2026-10-11, a test database) the reply after a PAC's
+    amount card took its own earlier carry for another plan's, the card having
+    set it to zero, and the next answer said the plan had been at the new
+    amount all along: the picture and the result both show the figures after
+    the write, and nothing said the card had moved them. Read off the stored
+    card, so the bytes are the same at every later turn and the cache keeps
+    reading them."""
     outcome = card.get("outcome", "pending")
     if outcome == "confirmed":
+        changed = [
+            {"what": d.get("field"), "before": d.get("now"), "after": d.get("proposed")}
+            for d in card.get("diff") or []
+        ]
+        if changed:
+            return {"outcome": "confirmed", "changed": changed, "written": card.get("result")}
         return {"outcome": "confirmed", "written": card.get("result")}
     if outcome == "rejected":
         return {

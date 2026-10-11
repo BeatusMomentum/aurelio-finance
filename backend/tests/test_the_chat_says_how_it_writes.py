@@ -114,6 +114,18 @@ def test_the_prompt_says_the_picture_already_holds_what_a_confirmed_card_wrote(p
     assert "anything there that matches a confirmed card is that card's own write, never a second copy" in prompt
 
 
+@pytest.mark.parametrize("prompt", PROMPTS, ids=["offered the web", "not"])
+def test_the_prompt_says_what_was_said_before_a_confirmed_card_was_true_then(prompt):
+    """Brief AO, item 5: after a transfer was confirmed in brief AN's P1 bis,
+    the reply called the balance it gave before the transfer a mistake. One
+    sentence, beside the one about the picture being newer; its effect is
+    measured in brief AO's P1."""
+    assert prompt.count(
+        "And what you said before a card was confirmed was true of their records then: when a "
+        "figure you gave has moved since, say that the card moved it, never that you were wrong."
+    ) == 1
+
+
 def test_the_turn_after_a_confirmed_card_reads_its_write_in_the_picture_above_the_question(
     client, monkeypatch
 ):
