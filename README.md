@@ -86,6 +86,7 @@ on 9 October, on a test database):
 | A follow-up, answered in one round | $0.021 |
 | A follow-up that drew a card, answered in one round | $0.012 to $0.022 |
 | Confirming a card, with the reply after it | $0.014 to $0.049 |
+| Whether something is worth buying, and how much, in two or three rounds, its searches included | $0.067 to $0.24 |
 | Each web search, on top of the round that asked for it | $0.0073 to $0.0075 |
 | An analysis | $0.33 to $0.51 |
 
