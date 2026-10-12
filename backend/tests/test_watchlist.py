@@ -228,7 +228,7 @@ def test_a_suggestion_is_drawn_from_the_registry_row_and_not_from_the_model(load
     assert card["outcome"] == "pending" and card["confirmation"] == "light"
     assert card["title"] == (
         "watch: Vanguard FTSE All-World UCITS ETF (USD) Accumulating, "
-        "IE00BK5BQT80 · accumulating · TER 0.14% · Ireland · 49 047 M EUR"
+        "IE00BK5BQT80 · accumulating · TER 0.14% · Ireland · Optimized sampling · 49 047 M EUR"
     )
     assert card["verb"] == "Add to watchlist"
     assert "name" not in card["arguments"], "the name is not the model's to write"

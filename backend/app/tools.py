@@ -396,6 +396,11 @@ _CATALOGUE_READING = (
     "gains.",
     "ter is the annual ongoing charge as a percentage; size_meur is the fund's "
     "size in millions of euro.",
+    "replication says how a product holds what it tracks. 'Physically backed' "
+    "holds it itself: a metal in a vault, or coins. 'Swap based' holds none of "
+    "it and follows an index through a contract with a bank, which for a "
+    "commodity is an index of futures. 'Full replication' and the sampling "
+    "kinds hold the shares or the bonds of their index.",
     "coverage says how the match was made. 'all' means every word was found; "
     "'partial' means the search had to loosen to find anything, which is a "
     "weaker claim about what was asked for and should be said out loud; 'none' "
@@ -4323,6 +4328,12 @@ def _registry_facts(row: models.Instrument) -> list[str]:
         facts.append(f"TER {row.ter}%")
     if row.domicile:
         facts.append(row.domicile)
+    # How it holds what it tracks (brief AQ): "Physically backed" holds the
+    # metal or the coins themselves, "Swap based" holds none of it and follows
+    # an index through a contract with a bank, which for a commodity is an index
+    # of futures. On the card, where a commodity is chosen or not.
+    if row.replication:
+        facts.append(row.replication)
     if row.size_meur:
         facts.append(f"{int(row.size_meur):,} M EUR".replace(",", " "))
     return facts
