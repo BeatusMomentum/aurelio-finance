@@ -169,7 +169,27 @@ because the market moves, only because the data it was built on changed.
 answer, only when you asked for several. A fund is named by an ISIN from the
 catalogue; a share by a symbol that Yahoo lists as a share. The old instruction
 ("avoid recommending specific securities") was not removed: it changed form,
-from an instruction into a structure.
+from an instruction into a structure. A commodity is named only through a
+product that holds it, which the catalogue's replication says: a future, or a
+product that follows futures through a swap, holds none of it.
+
+**How much is computed, and the chat chooses within it.** A figure for a
+purchase, said to a person, is not left to a model's arithmetic. The app works
+out what an amount stands on, from the records, and each figure says where it
+comes from: the cash on the accounts above a reserve of essential expenses,
+whose months are your own answer in the Profile or else the app's default of
+six, said as a default and never as yours; what is left each month once the
+PACs and your goals' recorded contributions are taken out; what each goal
+would need a month to reach its date. An expense with no nature counts as
+essential, because a reserve too large errs on the safe side. What a sum would
+weigh in your investments, and in a region, a sector, a company or a currency,
+is read through the look-through, as a held position is. An amount appears in
+one place, a suggestion card, within those figures and never above them, with
+what the chat assumed in choosing it, the figures it stood on that day, and
+the line that this is educational information, not regulated advice; accepting
+the card parks the idea and its amount on the watchlist, and buys nothing.
+When the records cannot size it (no expense recorded, so no reserve), there is
+no amount, and the chat says what would have to be entered.
 
 ## Known traps
 
