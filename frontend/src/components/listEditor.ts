@@ -43,8 +43,10 @@ export function useListEditor<T extends { id: number }, P>(opts: {
   update: (id: number, data: P) => Promise<unknown>;
   destroy?: (id: number) => Promise<unknown>;
   /** What to ask before deleting. Naming the row is the point: "Delete?" and
-      "Delete income 'Salary'?" are answered with different care. */
-  confirmDelete?: (item: T) => string;
+      "Delete income 'Salary'?" are answered with different care. A promise
+      when the question has to be asked of the backend first: what deleting a
+      balance moves (brief AP). */
+  confirmDelete?: (item: T) => string | Promise<string>;
   /** Reload whatever this list came from. */
   onChanged: () => Promise<void> | void;
   /** Said only when the backend says nothing usable — see `apiError`. */
@@ -95,7 +97,7 @@ export function useListEditor<T extends { id: number }, P>(opts: {
 
   async function destroy(item: T) {
     if (!opts.destroy) return;
-    if (opts.confirmDelete && !window.confirm(opts.confirmDelete(item))) return;
+    if (opts.confirmDelete && !window.confirm(await opts.confirmDelete(item))) return;
     setError(null);
     try {
       await opts.destroy(item.id);

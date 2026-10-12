@@ -90,8 +90,8 @@ def test_the_prompt_says_what_no_card_does_yet_and_where(prompt):
         ("a PAC's frequency, the day of its first buy or its funds, a new PAC, or ending one", "Records, Cash flow"),
         # Correcting and deleting one have a card since brief AO (`change_ledger_entry`).
         ("changing what a ledger entry is, its kind, its instrument, its account or its currencies", "Portfolio, the ledger"),
-        # Correcting and deleting a transfer have a card since brief AP (`change_transfer`).
-        ("deleting a balance", "the account's page"),
+        # Correcting and deleting a transfer and a balance have a card since brief
+        # AP (`change_transfer`, `change_cash_balance`).
         # A card's null keeps a field as it is (write_flow, write_goal,
         # change_transfer, whose side made external would empty one).
         ("emptying a field of a line, a goal or a transfer", "Records, Cash flow; Profile"),
@@ -100,6 +100,9 @@ def test_the_prompt_says_what_no_card_does_yet_and_where(prompt):
     ):
         assert missing in said and where in said, missing
     assert "never as a choice of yours" in said
+    # Brief AP: a transfer and a balance are corrected and deleted by a card now.
+    for done in ("correcting or deleting a transfer", "deleting a balance"):
+        assert done not in said, done
 
 
 def test_every_card_the_prompt_lists_is_a_tool_that_draws_one():

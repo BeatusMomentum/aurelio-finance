@@ -1,13 +1,22 @@
 """What a change to an account's cash moves, worked out and said once.
 
-Brief AP (2026-10-12). The chat corrects and deletes a transfer
-(`tools.change_transfer`), and the Cash flow page's Delete asks before it
-deletes one. What either moves is worked out and said here, so the card and
-the page's question cannot disagree: each account's cash today, before and
-after, read by `analytics.compute_cash_position` with the change standing in
-for the stored rows; the days whose figures change (`analytics.cash_changed`);
-and when an account is left with no balance in force, what that does to every
-total.
+Brief AP (2026-10-12). The chat corrects and deletes a transfer and a balance
+(`tools.change_transfer`, `tools.change_cash_balance`), and the Cash flow
+page's Delete of a transfer and the account page's Delete of a balance ask
+before they delete one. What either moves is worked out and said here, so the
+card and the page's question cannot disagree: each account's cash today,
+before and after, read by `analytics.compute_cash_position` with the change
+standing in for the stored rows; the days whose figures change
+(`analytics.cash_changed`); and when an account is left with no balance in
+force, what that does to every total.
+
+Measured on copies of the test database before the balance's card was written
+(the record, brief AP's plan): deleting an account's only balance leaves its
+cash unprojected and counted 0 in every total, which RAISED the Dashboard's
+cash where the projection had been negative; deleting its latest balance runs
+the cash from the one before it, with everything dated after that one; a
+balance moved to a later day left today's cash as it was, and the days
+between without a balance in force.
 """
 
 from __future__ import annotations
@@ -165,3 +174,45 @@ def transfer_deletion(db: Session, transfer: models.Transfer) -> str:
     chat's card says it: the same words, with today's figures."""
     moves = transfer_moves(db, transfer)
     return " ".join([GONE, *said(moves, [transfer.date], figures=True)])
+
+
+# --- A balance -------------------------------------------------------------------
+
+# Why a balance that is not the latest leaves today's cash as it is.
+AFTER_IT = "is the one its cash today runs from"
+
+
+def balance_moves(
+    db: Session, anchor: models.CashAnchor, replaced_by: models.CashAnchor | None = None
+) -> list[Moved]:
+    """What correcting `anchor` into `replaced_by`, or deleting it (None),
+    moves on its account."""
+    own = [a for a in crud.get_cash_anchors_for_institution(db, anchor.institution_id) if a.id != anchor.id]
+    since = anchor.date
+    if replaced_by is not None:
+        own.append(replaced_by)
+        since = min(since, replaced_by.date)
+    return moved(db, [anchor.institution_id], since, anchors={anchor.institution_id: own})
+
+
+def left_without_a_balance(db: Session, anchor: models.CashAnchor) -> bool:
+    """Whether `anchor` is its account's only balance."""
+    return len(crud.get_cash_anchors_for_institution(db, anchor.institution_id)) == 1
+
+
+def currency_after(db: Session, name: str) -> str:
+    """What the forms propose for an account left with no balance."""
+    return (
+        f"With no balance, every form proposes the base, {fx.base_currency(db)}, for {name}'s "
+        "amounts."
+    )
+
+
+def balance_deletion(db: Session, anchor: models.CashAnchor) -> str:
+    """What deleting a balance does, as the account page asks it and the
+    chat's card says it: the same words, with today's figures."""
+    moves = balance_moves(db, anchor)
+    words = [GONE, *said(moves, [anchor.date], figures=True, held=AFTER_IT)]
+    if left_without_a_balance(db, anchor):
+        words.append(currency_after(db, anchor.institution.name))
+    return " ".join(words)

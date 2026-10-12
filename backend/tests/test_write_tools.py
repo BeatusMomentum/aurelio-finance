@@ -771,6 +771,9 @@ def test_the_write_tools_do_not_run_when_the_model_calls_them(client):
         # Brief AP: a transfer, corrected or deleted as the Cash flow form does it
         # (test_the_chat_corrects_and_deletes_a_transfer.py).
         "change_transfer",
+        # And a balance, as the account's page does it
+        # (test_the_chat_corrects_and_deletes_a_balance.py).
+        "change_cash_balance",
     }
 
     # A buy names its institution, because one that does not is now refused

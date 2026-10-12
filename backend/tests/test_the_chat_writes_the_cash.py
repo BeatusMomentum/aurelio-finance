@@ -316,8 +316,12 @@ def test_a_balance_on_a_day_that_has_one_replaces_it_as_the_forms_edit(client, m
         client, monkeypatch, "set_cash_balance", account="Dollar Bank", date=ANCHOR_DAY, amount=1200
     )
     assert card["confirmation"] == "diff"
+    # Since brief AP the card says what the replacement moves, in figures, as
+    # the account's register reads them: here with no rate on record, so the
+    # dollars count as stored (`fx.to_base_or_as_stored`).
     assert card["diff"] == [
-        {"field": f"Balance on {ANCHOR_DAY}", "now": "1000.00 USD", "proposed": "1200.00 USD"}
+        {"field": f"Balance on {ANCHOR_DAY}", "now": "1000.00 USD", "proposed": "1200.00 USD"},
+        {"field": "Cash at Dollar Bank today", "now": "1000.00 EUR", "proposed": "1200.00 EUR"},
     ]
     assert card["consequence"].startswith(
         f"This replaces the balance already on {ANCHOR_DAY}, which does not come back."

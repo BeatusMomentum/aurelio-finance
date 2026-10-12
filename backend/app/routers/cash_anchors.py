@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import analytics, crud, models, schemas
+from app import analytics, cash_moves, crud, models, schemas
 from app.database import get_db
 from app.routers.deps import get_or_404
 
@@ -117,6 +117,17 @@ def update_cash_anchor(
             status_code=status.HTTP_409_CONFLICT,
             detail="A cash anchor for this institution and date already exists",
         )
+
+
+@router.get("/cash-anchors/{anchor_id}/deletion", response_model=schemas.DeletionRead)
+def what_deleting_it_moves(
+    anchor_id: int,
+    db: Session = Depends(get_db),
+) -> schemas.DeletionRead:
+    """What deleting this balance does to its account's cash, in the words the
+    chat's card says it with: the account page's Delete asks with them."""
+    anchor = get_or_404(db, models.CashAnchor, anchor_id)
+    return schemas.DeletionRead(said=cash_moves.balance_deletion(db, anchor))
 
 
 @router.delete("/cash-anchors/{anchor_id}", status_code=status.HTTP_204_NO_CONTENT)

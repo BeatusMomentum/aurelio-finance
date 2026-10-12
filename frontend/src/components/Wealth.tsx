@@ -30,6 +30,7 @@ import { OmissionsNotice } from "./OmissionsNotice";
 import { InstrumentPicker } from "./InstrumentPicker";
 import type { Focus } from "../nav";
 import {
+  cashAnchorDeletion,
   createCashAnchor,
   deleteCashAnchor,
   getCashAnchors,
@@ -448,6 +449,10 @@ function CashRegister({
         create={(p) => createCashAnchor(institution.id, p)}
         update={updateCashAnchor}
         destroy={deleteCashAnchor}
+        // What deleting it does to this account's cash, in the words the
+        // chat's card says it with (brief AP): the cash then runs from the
+        // balance before it, or, for the only one, is not projected at all.
+        deleteMoves={(a) => cashAnchorDeletion(a.id)}
         onChanged={load}
         noun="cash anchor"
         dateLabel="balance on"

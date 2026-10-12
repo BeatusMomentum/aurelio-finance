@@ -48,6 +48,12 @@ export async function deleteCashAnchor(id: number): Promise<void> {
   await api.delete(`/api/cash-anchors/${id}`);
 }
 
+// GET /api/cash-anchors/{id}/deletion -> what deleting it moves, in the words
+// the chat's card says it with (brief AP).
+export async function cashAnchorDeletion(id: number): Promise<string> {
+  return (await api.get<Schemas["DeletionRead"]>(`/api/cash-anchors/${id}/deletion`)).data.said;
+}
+
 // GET /api/institutions/{id}/cash  -> projected position (optionally as of a date)
 export async function getCashPosition(
   institutionId: number,

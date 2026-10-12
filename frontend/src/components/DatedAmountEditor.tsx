@@ -1,6 +1,7 @@
-import { EditorButtons, Row, RowsOrEmpty, inputClass, money, CURRENCY_LIST } from "./ui";
+import { EditorButtons, Row, RowsOrEmpty, apiError, inputClass, money, CURRENCY_LIST } from "./ui";
 import { useListEditor } from "./listEditor";
 import { marks, type Need } from "./required";
+import { askBeforeDeleting } from "./cashDelete";
 
 /* "A date and an amount, one row per date" — written three times, identically.
 
@@ -35,6 +36,7 @@ export function DatedAmountEditor<T extends { id: number; note: string | null },
   create,
   update,
   destroy,
+  deleteMoves,
   onChanged,
   /** Singular, lower case: "balance", "valuation", "cash anchor". It names the
       thing in the confirm dialog AND in the save error. */
@@ -77,6 +79,10 @@ export function DatedAmountEditor<T extends { id: number; note: string | null },
   create: (data: P) => Promise<unknown>;
   update: (id: number, data: P) => Promise<unknown>;
   destroy: (id: number) => Promise<unknown>;
+  /** What deleting a row moves, in words, asked of the backend before the
+      question is put (a cash anchor's: brief AP). Left out, the question
+      names the row and nothing more. */
+  deleteMoves?: (item: T) => Promise<string>;
   onChanged: () => Promise<void> | void;
   noun: string;
   /** The amount box's name: "Remaining", "Value", "Actual cash". */
@@ -102,7 +108,12 @@ export function DatedAmountEditor<T extends { id: number; note: string | null },
     create,
     update,
     destroy,
-    confirmDelete: (i) => `Delete the ${noun} of ${dateOf(i)}?`,
+    confirmDelete: (i) => {
+      const asked = `Delete the ${noun} of ${dateOf(i)}?`;
+      return deleteMoves
+        ? askBeforeDeleting(asked, () => deleteMoves(i), (err) => apiError(err, "no answer came."))
+        : asked;
+    },
     saveError: `Save failed (a ${noun} for that date may already exist).`,
     onChanged,
   });

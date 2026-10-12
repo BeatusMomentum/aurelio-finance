@@ -3160,20 +3160,36 @@ def _propose_balance(db: Session, args: SetCashBalanceArgs) -> Proposal:
             consequence=said,
             touches=touches,
         )
+    # A day that has a balance has it corrected, and the card says in figures
+    # what that moves, from the function `change_cash_balance` and the page's
+    # Delete say it with (brief AP).
+    after = models.CashAnchor(
+        id=b.existing.id, institution_id=b.account.id, note=b.existing.note,
+        date=day, amount=b.body["amount"], currency=b.body["currency"],
+    )
+    moves = cash_moves.balance_moves(db, b.existing, after)
+    diff = [
+        {
+            "field": f"Balance on {day}",
+            "now": f"{b.existing.amount:.2f} {b.existing.currency}",
+            "proposed": held,
+        },
+        *cash_moves.lines(moves),
+    ]
+    consequence = " ".join(
+        [
+            f"This replaces the balance already on {day}, which does not come back. {said}",
+            *cash_moves.said(moves, [day], figures=False, held=cash_moves.AFTER_IT),
+        ]
+    )
     return Proposal(
         title=f"cash balance: {name} on {day}, {b.existing.amount:.2f} → {held}",
-        fingerprint=fingerprint,
-        confirmation="diff",
-        consequence=(
-            f"This replaces the balance already on {day}, which does not come back. {said}"
+        fingerprint=json.dumps(
+            {"balance": fingerprint, "diff": diff, "said": consequence}, sort_keys=True
         ),
-        diff=[
-            {
-                "field": f"Balance on {day}",
-                "now": f"{b.existing.amount:.2f} {b.existing.currency}",
-                "proposed": held,
-            }
-        ],
+        confirmation="diff",
+        consequence=consequence,
+        diff=diff,
         touches=touches,
     )
 
@@ -3206,6 +3222,196 @@ def _balance_receipt(result: dict) -> list[tuple]:
         ("Held", result.get("amount"), "amount", result.get("currency")),
         ("It replaced", result.get("replaced") or "nothing, a new day", "text"),
     ]
+
+
+# --- change_cash_balance ----------------------------------------------------------
+#
+# A balance on record, corrected or deleted as the account's page does it
+# (brief AP): its ✎ and Save, the PUT of the day, the amount and the currency
+# (`DatedAmountEditor`'s `toPayload`), through `crud.update_cash_anchor`; its
+# Delete, through `crud.delete_cash_anchor`. The card says in figures what
+# that does to the account's cash today and on which past days its figures
+# change (`cash_moves`), from the function the page's Delete asks with. The
+# picture shows each account's latest balance only, so another is named by
+# its day, and one that is not there is refused with those on record.
+
+
+class ChangeCashBalanceArgs(BaseModel):
+    """One balance of one of their accounts, corrected or deleted."""
+
+    action: Literal["correct", "delete"] = Field(
+        ...,
+        description="correct: the balance takes the figures of their statement. delete: it goes.",
+    )
+    account: str = Field(..., min_length=1, description="The account, by name.")
+    date: datetime.date = Field(..., description="The balance's day, as they name it.")
+    # `ObservedDate`, so a day that has not happened is refused while the card
+    # is drawn, as the account page's form refuses it.
+    new_date: schemas.ObservedDate | None = Field(
+        default=None,
+        description="correct: the day it was held, never after today, or null to keep it.",
+    )
+    new_amount: float | None = Field(
+        default=None, ge=0, description="correct: the cash it held, or null to keep it."
+    )
+    new_currency: schemas.StatedCurrency | None = Field(
+        default=None, description="correct: what it was held in, or null to keep it."
+    )
+
+    @model_validator(mode="after")
+    def _what_each_action_needs(self):
+        new = (self.new_date, self.new_amount, self.new_currency)
+        if self.action == "correct" and all(v is None for v in new):
+            raise ValueError("correct needs at least one new value.")
+        if self.action == "delete" and any(v is not None for v in new):
+            raise ValueError("delete takes no new values.")
+        return self
+
+
+def _held(a) -> str:
+    return f"{a.amount:.2f} {a.currency}"
+
+
+def _balance_row(db: Session, args: ChangeCashBalanceArgs) -> models.CashAnchor:
+    """The balance the reader means, by its account and its day, or a refusal
+    listing the account's balances on record."""
+    inst = _account(db, args.account)
+    day = args.date.isoformat()
+    anchors = crud.get_cash_anchors_for_institution(db, inst.id)
+    found = next((a for a in anchors if a.date == day), None)
+    if found is not None:
+        return found
+    near = sorted(anchors, key=lambda a: abs((datetime.date.fromisoformat(a.date) - args.date).days))[:10]
+    on_record = "; ".join(f"{a.date} {_held(a)}" for a in sorted(near, key=lambda a: a.date)) or "none"
+    raise LookupError(f"{inst.name} has no balance on {day}. Its balances on record: {on_record}.")
+
+
+@dataclass(frozen=True)
+class _BalanceChange:
+    """One card's change to a balance, worked out once for the card and the
+    write."""
+
+    row: models.CashAnchor
+    body: dict | None  # the page's PUT body for a correction; None for a deletion
+    after: models.CashAnchor | None  # the balance as the correction leaves it, never stored
+
+
+def _balance_change(db: Session, args: ChangeCashBalanceArgs) -> _BalanceChange:
+    """The balance, and for a correction the body the page would send and the
+    balance as that body would leave it, or a refusal in words."""
+    a = _balance_row(db, args)
+    if args.action == "delete":
+        return _BalanceChange(a, None, None)
+    body = {
+        "date": args.new_date.isoformat() if args.new_date else a.date,
+        "amount": args.new_amount if args.new_amount is not None else a.amount,
+        "currency": _stored_currency(args.new_currency) if args.new_currency else a.currency,
+    }
+    try:
+        schemas.CashAnchorCreate(**body)
+    except ValidationError as exc:
+        raise LookupError(_refused_body(exc)) from exc
+    taken = next(
+        (
+            other for other in crud.get_cash_anchors_for_institution(db, a.institution_id)
+            if other.id != a.id and other.date == body["date"]
+        ),
+        None,
+    )
+    if taken is not None:
+        raise LookupError(
+            f"{a.institution.name} already has a balance on {taken.date}, {_held(taken)}: one "
+            "balance a day, as the account's page keeps them. Correct that one, or delete one of "
+            "the two first."
+        )
+    after = models.CashAnchor(
+        id=a.id, institution_id=a.institution_id, note=a.note,
+        date=body["date"], amount=body["amount"], currency=body["currency"],
+    )
+    return _BalanceChange(a, body, after)
+
+
+def _propose_balance_change(db: Session, args: ChangeCashBalanceArgs) -> Proposal:
+    """A balance rewritten or deleted, so the diff: what changes on it and the
+    account's cash today; and in words, on which days its figures change, and
+    what an account left with no balance becomes. Its fingerprint is the
+    account's balances as stored and everything the card says."""
+    change = _balance_change(db, args)
+    a, after = change.row, change.after
+    name = a.institution.name
+    moves = cash_moves.balance_moves(db, a, after)
+    if after is None:
+        diff = [{"field": "Balance", "now": f"{a.date}: {_held(a)}", "proposed": "deleted"}]
+        said = [cash_moves.GONE, *cash_moves.said(moves, [a.date], figures=False, held=cash_moves.AFTER_IT)]
+        if cash_moves.left_without_a_balance(db, a):
+            said.append(cash_moves.currency_after(db, name))
+        title = f"delete balance: {name}, {_held(a)} on {a.date}"
+    else:
+        fields = [("Day", a.date, after.date), ("Held", _held(a), _held(after))]
+        diff = [{"field": f, "now": now, "proposed": then} for f, now, then in fields if now != then]
+        if not diff:
+            raise LookupError(f"The balance already says that: {name} held {_held(a)} on {a.date}. Nothing would change.")
+        said = ["A correction: the balance takes these figures."]
+        said.extend(cash_moves.said(moves, [a.date, after.date], figures=False, held=cash_moves.AFTER_IT))
+        if after.currency != a.currency:
+            said.append(f"Where this balance is in force, the forms then propose {after.currency} for {name}'s amounts.")
+        title = (
+            f"correct balance: {name} on {a.date}"
+            + (f", moved to {after.date}" if after.date != a.date else "")
+            + (f", {_held(a)} → {_held(after)}" if _held(after) != _held(a) else "")
+        )
+    diff.extend(cash_moves.lines(moves))
+    stored = [
+        (b.id, b.date, b.amount, b.currency) for b in crud.get_cash_anchors_for_institution(db, a.institution_id)
+    ]
+    return Proposal(
+        title=title,
+        fingerprint=json.dumps({"balances": stored, "diff": diff, "said": said}, sort_keys=True, default=str),
+        confirmation="diff",
+        consequence=" ".join(said),
+        diff=diff,
+        touches=f"{name}'s balance on {a.date}",
+    )
+
+
+def _change_cash_balance(db: Session, args: ChangeCashBalanceArgs) -> dict:
+    """The correction through the function the page's PUT calls, or the
+    deletion through the one its Delete calls."""
+    change = _balance_change(db, args)
+    a = change.row
+    name = a.institution.name
+    if change.body is None:
+        gone = f"{a.date}: {_held(a)}"
+        crud.delete_cash_anchor(db, a.id)
+        return {"account": name, "deleted": gone}
+    kept = crud.update_cash_anchor(db, a.id, schemas.CashAnchorCreate(**change.body))
+    return {"account": name, "date": kept.date, "amount": kept.amount, "currency": kept.currency}
+
+
+_CHANGE_BALANCE_LABELS = {
+    "action": "",
+    "account": "Account",
+    "date": "Balance of",
+    "new_date": "New day",
+    "new_amount": "New amount",
+    "new_currency": "Held in",
+}
+
+
+def _change_balance_receipt(result: dict) -> list[tuple]:
+    """The balance as the account's page lists it now, or the one that went."""
+    if "deleted" in result:
+        return [("Deleted", result["deleted"], "text")]
+    return [
+        ("Held", result.get("amount"), "amount", result.get("currency")),
+        ("On", result.get("date"), "date"),
+    ]
+
+
+def _change_balance_done(card: dict) -> str:
+    return {"correct": "Corrected", "delete": "Deleted"}.get(
+        (card.get("arguments") or {}).get("action"), "Corrected"
+    )
 
 
 # --- write_goal ----------------------------------------------------------------
@@ -4507,6 +4713,22 @@ REGISTRY: dict[str, Tool] = {
             propose=_propose_balance,
             labels=_BALANCE_LABELS,
             receipt=_balance_receipt,
+        ),
+        Tool(
+            name="change_cash_balance",
+            description=(
+                "Propose correcting one balance of one of their accounts (its day, its amount or "
+                "its currency) or deleting it, as the account's page corrects and deletes one. "
+                "The picture shows each account's latest balance only, so name another by its "
+                "day; one that is not there is refused with those on record. The card says in "
+                "figures what that does to the account's cash and on which days."
+            ),
+            arguments=ChangeCashBalanceArgs,
+            run=_change_cash_balance,
+            propose=_propose_balance_change,
+            labels=_CHANGE_BALANCE_LABELS,
+            receipt=_change_balance_receipt,
+            done=_change_balance_done,
         ),
         Tool(
             name="write_goal",
