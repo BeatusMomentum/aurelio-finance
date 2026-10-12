@@ -95,8 +95,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import (
-    advisor, analytics, catalogue, chain, composition, crud, dated, fx, models, pac, positions,
-    prices, questionnaire, schemas,
+    advisor, analytics, cash_moves, catalogue, chain, composition, crud, dated, fx, models, pac,
+    positions, prices, questionnaire, schemas,
 )
 from app.database import unit_of_work
 
@@ -2790,6 +2790,305 @@ def _transfer_receipt(result: dict) -> list[tuple]:
     ]
 
 
+# --- change_transfer ------------------------------------------------------------
+#
+# A transfer on record, corrected or deleted as the Cash flow page's form does
+# (brief AP): its PUT, the whole `TransferCreate` the form sends for a row
+# opened and saved, through `crud.update_transfer`; its DELETE, through
+# `crud.delete_transfer`. The card says what each account's cash does from
+# the transfer's day (`cash_moves`), from the same function the page's Delete
+# asks with. The picture lists no transfer, only each account's totals, so a
+# transfer is named by its day and its accounts, as the reader names it, and
+# one that is not there is refused with those on record.
+
+
+class ChangeTransferArgs(BaseModel):
+    """One transfer on record, corrected or deleted."""
+
+    action: Literal["correct", "delete"] = Field(
+        ...,
+        description="correct: the transfer takes the figures of their statement. delete: it goes.",
+    )
+    date: datetime.date = Field(..., description="The transfer's day, as they name it.")
+    from_account: MaybeText = Field(
+        default=None,
+        description="The account it left, by name; null when it came from outside their accounts.",
+    )
+    to_account: MaybeText = Field(
+        default=None,
+        description="The account it reached, by name; null when it went outside their accounts.",
+    )
+    amount: float | None = Field(
+        default=None,
+        gt=0,
+        description="What left, only when two transfers share the day and the accounts.",
+    )
+    new_date: datetime.date | None = Field(default=None, description="correct: the day it moved, or null to keep it.")
+    new_from_account: MaybeText = Field(
+        default=None, description="correct: the account it left, by name, or null to keep it."
+    )
+    new_to_account: MaybeText = Field(
+        default=None, description="correct: the account it reached, by name, or null to keep it."
+    )
+    new_amount: float | None = Field(default=None, gt=0, description="correct: what left, or null to keep it.")
+    new_currency: schemas.StatedCurrency | None = Field(
+        default=None, description="correct: what it left in, or null to keep it."
+    )
+    new_to_currency: schemas.StatedCurrency | None = Field(
+        default=None, description="correct: what it reached the second account in, or null to keep it."
+    )
+    new_arrived: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "correct: what reached the second account, from its statement. Null keeps a "
+            "figure typed from a statement, and works out again one the app worked out, at "
+            "the ECB rate of its day."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _what_each_action_needs(self):
+        if self.from_account is None and self.to_account is None:
+            raise ValueError("Name the account it left or the one it reached, as the picture names them.")
+        new = (
+            self.new_date, self.new_from_account, self.new_to_account, self.new_amount,
+            self.new_currency, self.new_to_currency, self.new_arrived,
+        )
+        if self.action == "correct" and all(v is None for v in new):
+            raise ValueError("correct needs at least one new value.")
+        if self.action == "delete" and any(v is not None for v in new):
+            raise ValueError("delete takes no new values.")
+        return self
+
+
+def _side(db: Session, iid: int | None) -> str:
+    """A side of a transfer as the Cash flow page names it."""
+    inst = crud.get_institution(db, iid) if iid is not None else None
+    return inst.name if inst is not None else "External"
+
+
+def _same_sum(t) -> bool:
+    """The Cash flow page's `sameSum`: one currency, and what arrived is what left."""
+    return t.to_currency == t.currency and t.to_amount == t.amount
+
+
+def _transfer_text(db: Session, t) -> str:
+    """A transfer in one line, as the Cash flow page lists it."""
+    moved = f"{t.amount:.2f} {t.currency}"
+    if not _same_sum(t):
+        moved += f" → {t.to_amount:.2f} {t.to_currency}"
+    rate = f" at the ECB rate of {t.fx_as_of}" if t.fx_as_of else ""
+    return f"{t.date} {_side(db, t.from_institution_id)} to {_side(db, t.to_institution_id)}: {moved}{rate}"
+
+
+def _transfer_row(db: Session, args: ChangeTransferArgs) -> models.Transfer:
+    """The transfer the reader means, by its day and its accounts, or a
+    refusal listing those on record, since the picture shows none. A side
+    left null is outside their accounts; when nothing matches both sides so,
+    a null side is read as one they did not say, and the named side must
+    still be the transfer's own."""
+    named = [_account(db, n).id if n else None for n in (args.from_account, args.to_account)]
+    rows = crud.get_transfers(db)
+    day = args.date.isoformat()
+    hits = [t for t in rows if t.date == day and [t.from_institution_id, t.to_institution_id] == named]
+    if not hits:
+        hits = [
+            t for t in rows
+            if t.date == day
+            and named[0] in (None, t.from_institution_id)
+            and named[1] in (None, t.to_institution_id)
+        ]
+    if len(hits) > 1 and args.amount is not None:
+        hits = [t for t in hits if abs(t.amount - args.amount) < 0.005] or hits
+    if len(hits) == 1:
+        return hits[0]
+    if hits:
+        raise LookupError(
+            f"{len(hits)} transfers match: {'; '.join(_transfer_text(db, t) for t in hits)}. Say which "
+            "by what left."
+        )
+    theirs = [
+        t for t in rows
+        if {t.from_institution_id, t.to_institution_id} & ({i for i in named if i is not None})
+    ]
+    near = sorted(
+        theirs or rows, key=lambda t: abs((datetime.date.fromisoformat(t.date) - args.date).days)
+    )[:10]
+    on_record = "; ".join(_transfer_text(db, t) for t in near) or "none"
+    raise LookupError(f"No transfer of {day} between those accounts is on record. On record: {on_record}.")
+
+
+def _transfer_form_body(t: models.Transfer) -> dict:
+    """The body the Cash flow form PUTs for a transfer opened and saved as it
+    is (`TransferSection`'s `startEdit`, then `submit`): both sides, the
+    amount and both currencies as stored, and what arrived only when it was
+    typed from a statement (no rate day, and not the same sum), else empty,
+    for the app to work out again at the rate of the transfer's day."""
+    typed = t.fx_as_of is None and not _same_sum(t)
+    return {
+        "date": t.date,
+        "from_institution_id": t.from_institution_id,
+        "to_institution_id": t.to_institution_id,
+        "amount": t.amount,
+        "currency": t.currency.strip(),
+        "to_currency": t.to_currency.strip(),
+        "to_amount": t.to_amount if typed else None,
+    }
+
+
+@dataclass(frozen=True)
+class _TransferChange:
+    """One card's change to a transfer, worked out once for the card and the
+    write."""
+
+    row: models.Transfer
+    body: dict | None  # the form's PUT body for a correction; None for a deletion
+    after: models.Transfer | None  # the transfer as the correction leaves it, never stored
+
+
+def _transfer_change(db: Session, args: ChangeTransferArgs) -> _TransferChange:
+    """The transfer, and for a correction the body the form would send and
+    the transfer as that body would leave it, or the form's refusal in words."""
+    t = _transfer_row(db, args)
+    if args.action == "delete":
+        return _TransferChange(t, None, None)
+    body = _transfer_form_body(t)
+    for field_name, value in (
+        ("date", args.new_date.isoformat() if args.new_date else None),
+        ("from_institution_id", _account(db, args.new_from_account).id if args.new_from_account else None),
+        ("to_institution_id", _account(db, args.new_to_account).id if args.new_to_account else None),
+        ("amount", args.new_amount),
+        ("currency", _stored_currency(args.new_currency) if args.new_currency else None),
+        ("to_currency", _stored_currency(args.new_to_currency) if args.new_to_currency else None),
+        ("to_amount", args.new_arrived),
+    ):
+        if value is not None:
+            body[field_name] = value
+    if body["from_institution_id"] == body["to_institution_id"]:
+        raise LookupError("A transfer moves cash between two accounts: name two.")
+    try:
+        changes = crud.transfer_as_corrected(db, t, schemas.TransferCreate(**body))
+    except ValidationError as exc:
+        raise LookupError(_refused_body(exc)) from exc
+    except crud.TransferRateUnknown as exc:
+        raise LookupError(str(exc)) from exc
+    columns = {c.key: getattr(t, c.key) for c in models.Transfer.__table__.columns}
+    return _TransferChange(t, body, models.Transfer(**{**columns, **changes}))
+
+
+def _arrival(t) -> str:
+    """How what arrived was had, in the reader's words."""
+    if t.fx_as_of:
+        return f"at the ECB rate of {t.fx_as_of}"
+    return "the same sum" if _same_sum(t) else "from a statement"
+
+
+def _propose_transfer_change(db: Session, args: ChangeTransferArgs) -> Proposal:
+    """A transfer rewritten or deleted, so the diff: what changes on it, and
+    each account's cash today; and in words, from which days each account's
+    cash changes. Its fingerprint is the transfer as stored and everything
+    the card says, so anything that would change the card makes it stale."""
+    change = _transfer_change(db, args)
+    t, after = change.row, change.after
+    sides = f"{_side(db, t.from_institution_id)} to {_side(db, t.to_institution_id)}"
+    moves = cash_moves.transfer_moves(db, t, after)
+    if after is None:
+        diff = [{"field": "Transfer", "now": _transfer_text(db, t), "proposed": "deleted"}]
+        said = [cash_moves.GONE, *cash_moves.said(moves, [t.date], figures=False)]
+        title = f"delete transfer: {_transfer_text(db, t)}"
+    else:
+        fields = [
+            ("Day", t.date, after.date),
+            ("From", _side(db, t.from_institution_id), _side(db, after.from_institution_id)),
+            ("To", _side(db, t.to_institution_id), _side(db, after.to_institution_id)),
+            ("Left", f"{t.amount:.2f} {t.currency}", f"{after.amount:.2f} {after.currency}"),
+            ("Reached", f"{t.to_amount:.2f} {t.to_currency}", f"{after.to_amount:.2f} {after.to_currency}"),
+            ("What arrived is", _arrival(t), _arrival(after)),
+        ]
+        diff = [{"field": f, "now": now, "proposed": then} for f, now, then in fields if now != then]
+        if not diff:
+            raise LookupError(f"The transfer already says that: {_transfer_text(db, t)}. Nothing would change.")
+        said = ["A correction: the transfer takes these figures."]
+        typed = t.fx_as_of is None and not _same_sum(t)
+        if (
+            typed
+            and args.new_arrived is None
+            and (after.amount, after.currency, after.to_currency) != (t.amount, t.currency, t.to_currency)
+        ):
+            said.append(
+                f"What arrived, {t.to_amount:.2f} {t.to_currency}, is a figure typed from a "
+                "statement, so it stays as it is, as the Cash flow form keeps it: say the new "
+                "figure if it changed."
+            )
+        elif after.fx_as_of and (after.fx_as_of, after.to_amount) != (t.fx_as_of, t.to_amount):
+            said.append(f"What arrived is worked out again, at the ECB rate of {after.fx_as_of}.")
+        said.extend(cash_moves.said(moves, [t.date, after.date], figures=False))
+        title = f"correct transfer: {t.date} {sides}" + (
+            f", {t.amount:.2f} → {after.amount:.2f} {after.currency}" if after.amount != t.amount else ""
+        )
+    diff.extend(cash_moves.lines(moves))
+    stored = {c.key: getattr(t, c.key) for c in models.Transfer.__table__.columns if c.key != "created_at"}
+    return Proposal(
+        title=title,
+        fingerprint=json.dumps({"transfer": stored, "diff": diff, "said": said}, sort_keys=True, default=str),
+        confirmation="diff",
+        consequence=" ".join(said),
+        diff=diff,
+        touches=f"the transfer of {t.date} from {sides}",
+    )
+
+
+def _change_transfer(db: Session, args: ChangeTransferArgs) -> dict:
+    """The correction through the function the form's PUT calls, or the
+    deletion through the one its DELETE calls."""
+    change = _transfer_change(db, args)
+    t = change.row
+    if change.body is None:
+        gone = _transfer_text(db, t)
+        crud.delete_transfer(db, t.id)
+        return {"deleted": gone}
+    kept = crud.update_transfer(db, t.id, schemas.TransferCreate(**change.body))
+    return {
+        "transfer": _transfer_text(db, kept),
+        "to_amount": kept.to_amount,
+        "to_currency": kept.to_currency,
+        "fx_as_of": kept.fx_as_of,
+    }
+
+
+_CHANGE_TRANSFER_LABELS = {
+    "action": "",
+    "date": "Transfer of",
+    "from_account": "From",
+    "to_account": "To",
+    "amount": "What left",
+    "new_date": "New day",
+    "new_from_account": "New source",
+    "new_to_account": "New destination",
+    "new_amount": "New amount",
+    "new_currency": "Left in",
+    "new_to_currency": "Reached in",
+    "new_arrived": "Reached",
+}
+
+
+def _change_transfer_receipt(result: dict) -> list[tuple]:
+    """The transfer as the Cash flow page lists it now, or the one that went."""
+    if "deleted" in result:
+        return [("Deleted", result["deleted"], "text")]
+    return [
+        ("Now", result.get("transfer"), "text"),
+        ("At the ECB rate of", result.get("fx_as_of"), "date"),
+    ]
+
+
+def _change_transfer_done(card: dict) -> str:
+    return {"correct": "Corrected", "delete": "Deleted"}.get(
+        (card.get("arguments") or {}).get("action"), "Corrected"
+    )
+
+
 class SetCashBalanceArgs(BaseModel):
     """What one of their accounts held on a day."""
 
@@ -4178,6 +4477,22 @@ REGISTRY: dict[str, Tool] = {
             propose=_propose_transfer,
             labels=_TRANSFER_LABELS,
             receipt=_transfer_receipt,
+        ),
+        Tool(
+            name="change_transfer",
+            description=(
+                "Propose correcting one transfer on record with the figures of their statement, "
+                "or deleting it, as the Cash flow page's form corrects and deletes one. The "
+                "picture lists no transfer, so name it by its day and its accounts as they do; "
+                "one that is not there is refused with those on record. The card says what each "
+                "account's cash does from that day."
+            ),
+            arguments=ChangeTransferArgs,
+            run=_change_transfer,
+            propose=_propose_transfer_change,
+            labels=_CHANGE_TRANSFER_LABELS,
+            receipt=_change_transfer_receipt,
+            done=_change_transfer_done,
         ),
         Tool(
             name="set_cash_balance",

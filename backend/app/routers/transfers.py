@@ -11,7 +11,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app import crud, models, schemas
+from app import cash_moves, crud, models, schemas
 from app.database import get_db
 from app.routers.deps import get_or_404
 
@@ -70,6 +70,17 @@ def update_transfer(
         return crud.update_transfer(db, transfer_id, payload)
     except crud.TransferRateUnknown as exc:
         raise _refused_without_a_rate(exc)
+
+
+@router.get("/transfers/{transfer_id}/deletion", response_model=schemas.DeletionRead)
+def what_deleting_it_moves(
+    transfer_id: int,
+    db: Session = Depends(get_db),
+) -> schemas.DeletionRead:
+    """What deleting this transfer does to each account's cash, in the words
+    the chat's card says it with: the Cash flow page's Delete asks with them."""
+    transfer = get_or_404(db, models.Transfer, transfer_id)
+    return schemas.DeletionRead(said=cash_moves.transfer_deletion(db, transfer))
 
 
 @router.delete("/transfers/{transfer_id}", status_code=status.HTTP_204_NO_CONTENT)

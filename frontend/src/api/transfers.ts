@@ -24,3 +24,9 @@ export async function updateTransfer(
 export async function deleteTransfer(id: number): Promise<void> {
   await api.delete(`/api/transfers/${id}`);
 }
+
+// GET /api/transfers/{id}/deletion -> what deleting it moves, in the words
+// the chat's card says it with (brief AP).
+export async function transferDeletion(id: number): Promise<string> {
+  return (await api.get<Schemas["DeletionRead"]>(`/api/transfers/${id}/deletion`)).data.said;
+}

@@ -1479,6 +1479,14 @@ class TransferRead(TransferBase):
     )
 
 
+class DeletionRead(BaseModel):
+    """What deleting a row does, in words, asked by a page before it deletes
+    it: the sentences the chat's card says for the same deletion (brief AP,
+    `cash_moves`)."""
+
+    said: str
+
+
 class CashPosition(BaseModel):
     """Projected cash for one institution at `as_of`, with its breakdown:
     projected = anchor_amount + income − expenses + transfers_in − transfers_out

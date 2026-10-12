@@ -768,6 +768,9 @@ def test_the_write_tools_do_not_run_when_the_model_calls_them(client):
         # And a ledger entry, corrected or deleted as the ledger form does it
         # (test_the_chat_corrects_and_deletes_a_ledger_entry.py).
         "change_ledger_entry",
+        # Brief AP: a transfer, corrected or deleted as the Cash flow form does it
+        # (test_the_chat_corrects_and_deletes_a_transfer.py).
+        "change_transfer",
     }
 
     # A buy names its institution, because one that does not is now refused

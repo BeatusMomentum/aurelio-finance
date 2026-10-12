@@ -825,6 +825,16 @@ def update_transfer(
     return _update(db, models.Transfer, transfer_id, data, build=_transfer_columns)
 
 
+def transfer_as_corrected(
+    db: Session, transfer: models.Transfer, data: schemas.TransferCreate
+) -> dict:
+    """The columns `update_transfer` would write onto `transfer` for `data`,
+    not written: what the chat's card for a correction shows (brief AP),
+    worked out by the same function that writes it. Raises
+    `TransferRateUnknown` as the write does."""
+    return _changes(db, transfer, data, build=_transfer_columns)
+
+
 # --- Deletes --------------------------------------------------------------
 # Deleting a parent cascades to its children (ORM cascade + SQLite ON DELETE
 # CASCADE): e.g. deleting an institution removes its accounts -> snapshots ->

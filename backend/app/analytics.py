@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import calendar
 import datetime
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
@@ -127,6 +127,8 @@ def compute_cash_position(
     as_of: datetime.date | None = None,
     conv: fx.Converter | None = None,
     transactions: list[models.Transaction] | None = None,
+    transfers: list[models.Transfer] | None = None,
+    anchors: list[models.CashAnchor] | None = None,
 ) -> dict | None:
     """Project an institution's cash at `as_of` (default today) from its latest
     anchor on/before that date::
@@ -148,7 +150,10 @@ def compute_cash_position(
     `transactions` stands for the ledger when given: the chat's card for a
     correction or a deletion asks what the register would read with the entry
     changed or gone (brief AO), from this function rather than a second copy
-    of its rule. Left out, the ledger is read from the database."""
+    of its rule. Left out, the ledger is read from the database. `transfers`
+    stands for the transfers table and `anchors` for this account's balances,
+    for the same question about a transfer or a balance (brief AP,
+    `cash_moves`)."""
     if as_of is None:
         as_of = datetime.date.today()
     if conv is None:
@@ -178,7 +183,9 @@ def compute_cash_position(
         "projected": 0.0,
     }
 
-    anchor = dated.latest_on_or_before(inst.cash_anchors, as_of_iso)
+    anchor = dated.latest_on_or_before(
+        inst.cash_anchors if anchors is None else anchors, as_of_iso
+    )
     if anchor is None:
         return result
 
@@ -204,16 +211,18 @@ def compute_cash_position(
         )
     )
 
-    transfers = dated.events_after(
-        anchor, db.scalars(select(models.Transfer)), until=as_of_iso
+    moved = dated.events_after(
+        anchor,
+        db.scalars(select(models.Transfer)) if transfers is None else transfers,
+        until=as_of_iso,
     )
     # Each side in its own figure: what left the source, and what reached the
     # destination — two sums when the accounts hold two currencies.
     transfers_in = sum(
-        in_base(t.to_amount, t.to_currency) for t in transfers if t.to_institution_id == inst.id
+        in_base(t.to_amount, t.to_currency) for t in moved if t.to_institution_id == inst.id
     )
     transfers_out = sum(
-        in_base(t.amount, t.currency) for t in transfers if t.from_institution_id == inst.id
+        in_base(t.amount, t.currency) for t in moved if t.from_institution_id == inst.id
     )
 
     # Ledger cash effects for this institution (a transaction's
@@ -792,36 +801,159 @@ def _cash_totals_by_date(
 
     totals: dict[str, float] = {}
     for d in dates:
-        d_date = datetime.date.fromisoformat(d)
         in_base = convs[d].to_base_or_as_stored
         total = 0.0
         for iid in inst_ids:
-            anchor = dated.latest_on_or_before(anchors_by_inst.get(iid, []), d)
-            if anchor is None:
-                continue  # no starting balance to project from
-            lo = _parse(anchor.date)
-            projected = in_base(anchor.amount, anchor.currency)
-            for i in incomes.get(iid, []):
-                projected += _flow_sum_in_window(
-                    in_base(i.amount, i.currency), i.frequency,
-                    _parse(i.start_date), _parse(i.end_date), lo, d_date,
-                )
-            for e in expenses.get(iid, []):
-                projected -= _flow_sum_in_window(
-                    in_base(e.amount, e.currency), e.frequency,
-                    _parse(e.start_date), _parse(e.end_date), lo, d_date,
-                )
-            for t in dated.events_after(anchor, transfers_by_inst.get(iid, []), until=d):
-                if t.to_institution_id == iid:
-                    projected += in_base(t.to_amount, t.to_currency)
-                if t.from_institution_id == iid:
-                    projected -= in_base(t.amount, t.currency)
-            for t in dated.events_after(anchor, ledger_by_inst.get(iid, []), until=d):
-                moved = in_base(t.amount, t.currency)
-                projected += -moved if t.kind == "buy" else moved
-            total += projected
+            projected = _projected_cash(
+                iid, d, in_base,
+                anchors_by_inst.get(iid, []), incomes.get(iid, []), expenses.get(iid, []),
+                transfers_by_inst.get(iid, []), ledger_by_inst.get(iid, []),
+            )
+            if projected is not None:  # None: no starting balance to project from
+                total += projected
         totals[d] = total
     return totals
+
+
+def _projected_cash(
+    iid: int,
+    d: str,
+    in_base: Callable[[float, str | None], float],
+    anchors: list,
+    incomes: list,
+    expenses: list,
+    transfers: list,
+    ledger: list,
+) -> float | None:
+    """One account's cash at `d`, on rows already read: `compute_cash_position`'s
+    arithmetic, the series' and the card's (`cash_changed`) alike. Each list
+    holds the account's own rows; `transfers` may hold others, which add
+    nothing. None when no balance is in force on `d`."""
+    anchor = dated.latest_on_or_before(anchors, d)
+    if anchor is None:
+        return None
+    d_date = datetime.date.fromisoformat(d)
+    lo = _parse(anchor.date)
+    projected = in_base(anchor.amount, anchor.currency)
+    for i in incomes:
+        projected += _flow_sum_in_window(
+            in_base(i.amount, i.currency), i.frequency,
+            _parse(i.start_date), _parse(i.end_date), lo, d_date,
+        )
+    for e in expenses:
+        projected -= _flow_sum_in_window(
+            in_base(e.amount, e.currency), e.frequency,
+            _parse(e.start_date), _parse(e.end_date), lo, d_date,
+        )
+    for t in dated.events_after(anchor, transfers, until=d):
+        if t.to_institution_id == iid:
+            projected += in_base(t.to_amount, t.to_currency)
+        if t.from_institution_id == iid:
+            projected -= in_base(t.amount, t.currency)
+    for t in dated.events_after(anchor, ledger, until=d):
+        moved = in_base(t.amount, t.currency)
+        projected += -moved if t.kind == "buy" else moved
+    return projected
+
+
+def _flow_days(flow, since: datetime.date, until: datetime.date) -> Iterator[datetime.date]:
+    """The days a flow pays on, from `since` to `until`: `_flow_sum_in_window`'s
+    dates, which are the only days a flow moves a projection."""
+    start, end = _parse(flow.start_date), _parse(flow.end_date)
+    if start is None:
+        return
+    last = until if end is None else min(until, end)
+    if (flow.frequency or "monthly") == "one_off":
+        if since <= start <= last:
+            yield start
+        return
+    for day in recurrence(start, STEP_MONTHS.get(flow.frequency or "monthly", 1), last):
+        if day >= since:
+            yield day
+
+
+def cash_changed(
+    db: Session,
+    institution_id: int,
+    since: datetime.date,
+    until: datetime.date,
+    conv: fx.Converter,
+    *,
+    transfers: list[models.Transfer] | None = None,
+    anchors: list[models.CashAnchor] | None = None,
+) -> list[tuple[datetime.date, datetime.date, bool]]:
+    """The spans of days, from `since` to `until`, on which the account's cash
+    reads differently with `transfers` standing for the transfers table and
+    `anchors` for its balances than with the rows as stored: each span's first
+    and last day, and whether no balance is in force anywhere in it after the
+    change.
+
+    Brief AP: a card that corrects or deletes a transfer or a balance, and the
+    pages' own Delete, say which past days' figures change. Measured on a copy
+    of the test database (2026-10-12): an account's only balance moved two
+    weeks later, with nothing dated between, left today's cash as it was,
+    while the days between had no balance in force any more, and the history
+    said so.
+
+    A projection moves only on a day something happens to it: a balance, a
+    transfer or a ledger entry of the account, a payment of one of its flows.
+    So both are read on those days, from `since` on, with the arithmetic of
+    `compute_cash_position` (`_projected_cash`), and between two such days
+    neither moves. Every day at the rates of `conv`: the question is which days
+    change, asked of both versions alike."""
+    inst = db.get(models.Institution, institution_id)
+    if inst is None or since > until:
+        return []
+    stored_anchors = list(inst.cash_anchors)
+    new_anchors = stored_anchors if anchors is None else list(anchors)
+    stored_transfers = [
+        t for t in db.scalars(select(models.Transfer))
+        if institution_id in (t.from_institution_id, t.to_institution_id)
+    ]
+    new_transfers = stored_transfers if transfers is None else [
+        t for t in transfers if institution_id in (t.from_institution_id, t.to_institution_id)
+    ]
+    incomes = list(db.scalars(select(models.IncomeSource).where(models.IncomeSource.institution_id == institution_id)))
+    expenses = list(db.scalars(select(models.Expense).where(models.Expense.institution_id == institution_id)))
+    ledger = [
+        t for t in db.scalars(select(models.Transaction))
+        if (t.cash_institution_id or t.institution_id) == institution_id
+    ]
+
+    days = {since}
+    for row in (*stored_anchors, *new_anchors, *stored_transfers, *new_transfers, *ledger):
+        day = _parse(row.date)
+        if since <= day <= until:
+            days.add(day)
+    for flow in (*incomes, *expenses):
+        days.update(_flow_days(flow, since, until))
+    ordered = sorted(days)
+
+    in_base = conv.to_base_or_as_stored
+    readings = []
+    for day in ordered:
+        d = day.isoformat()
+        before = _projected_cash(institution_id, d, in_base, stored_anchors, incomes, expenses, stored_transfers, ledger)
+        after = _projected_cash(institution_id, d, in_base, new_anchors, incomes, expenses, new_transfers, ledger)
+        moved = (before is None) != (after is None) or (
+            before is not None and abs(before - after) >= 0.005
+        )
+        readings.append((day, moved, after is None))
+
+    # A span ends where the figures stop changing, and where the change goes
+    # from leaving no balance in force to leaving one, or back: the days of
+    # each are said apart.
+    spans: list[tuple[datetime.date, datetime.date, bool]] = []
+    current: tuple[datetime.date, bool] | None = None
+    for day, moved, none_after in readings:
+        if current is not None and (not moved or none_after != current[1]):
+            spans.append((current[0], day - datetime.timedelta(days=1), current[1]))
+            current = None
+        if moved and current is None:
+            current = (day, none_after)
+    if current is not None:
+        spans.append((current[0], until, current[1]))
+    return spans
 
 
 def compute_net_worth_series(

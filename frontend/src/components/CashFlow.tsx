@@ -19,6 +19,7 @@ import {
   createTransfer,
   deleteTransfer,
   getTransfers,
+  transferDeletion,
   updateTransfer,
   type Transfer,
 } from "../api/transfers";
@@ -32,6 +33,7 @@ import {
 import { getInstitutions, type Institution } from "../api/institutions";
 import { getAllCashAnchors, type CashAnchor } from "../api/cash";
 import { accountCurrencyOn } from "./proposedCurrency";
+import { askBeforeDeleting } from "./cashDelete";
 import { InstrumentPicker, type InstrumentChoice } from "./InstrumentPicker";
 import { getPortfolio, type PortfolioRow } from "../api/portfolio";
 import {
@@ -633,7 +635,14 @@ function TransferSection({
   }
 
   async function remove(t: Transfer) {
-    if (!window.confirm("Delete this transfer?")) return;
+    // With what it moves, in the words the chat's card says it with (brief
+    // AP): each account's cash today and from which day.
+    const question = await askBeforeDeleting(
+      "Delete this transfer?",
+      () => transferDeletion(t.id),
+      (err) => apiError(err, "no answer came."),
+    );
+    if (!window.confirm(question)) return;
     setError(null);
     try {
       await deleteTransfer(t.id);

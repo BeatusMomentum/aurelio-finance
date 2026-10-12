@@ -1539,6 +1539,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/transfers/{transfer_id}/deletion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What Deleting It Moves
+         * @description What deleting this transfer does to each account's cash, in the words
+         *     the chat's card says it with: the Cash flow page's Delete asks with them.
+         */
+        get: operations["what_deleting_it_moves_api_transfers__transfer_id__deletion_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/watchlist": {
         parameters: {
             query?: never;
@@ -2975,6 +2996,16 @@ export interface components {
              * @description Value that left the totals because a newer photograph did not mention it. Selling is an assertion with a date and proceeds; forgetting is the absence of one, and the app must not let the difference pass in silence.
              */
             unresolved_omissions: components["schemas"]["OmittedPosition"][];
+        };
+        /**
+         * DeletionRead
+         * @description What deleting a row does, in words, asked by a page before it deletes
+         *     it: the sentences the chat's card says for the same deletion (brief AP,
+         *     `cash_moves`).
+         */
+        DeletionRead: {
+            /** Said */
+            said: string;
         };
         /**
          * ExpenseCreate
@@ -8201,6 +8232,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    what_deleting_it_moves_api_transfers__transfer_id__deletion_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                transfer_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletionRead"];
+                };
             };
             /** @description Validation Error */
             422: {
