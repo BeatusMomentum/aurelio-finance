@@ -32,8 +32,8 @@ Thumbs.db
 
 # ===== Working notes: they stay local and are never published =====
 # The personal backlog and the working constraints serve whoever works in this
-# folder, not whoever uses the product. The product's documents are README.md
-# and docs/, and they are tracked.
+# folder, not whoever uses the product. The product's documents are README.md,
+# docs/ and wiki/ (published to the GitHub wiki), and they are tracked.
 FutureIdeas.md
 SPEC.md
 ROADMAP.md

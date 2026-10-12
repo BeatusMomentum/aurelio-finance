@@ -67,7 +67,13 @@ the app saves a copy next to it.
   portfolio, and a synthesis says what to look at first.
 
 [How Aurelio reasons](docs/how-aurelio-reasons.md) explains the ideas
-underneath.
+underneath. Guides, and how each number is worked out, are in the
+[wiki](https://github.com/LosaLosSantos/aurelio-finance/wiki):
+[how to calculate net worth](https://github.com/LosaLosSantos/aurelio-finance/wiki/how-to-calculate-net-worth),
+[ETF overlap and portfolio X-ray](https://github.com/LosaLosSantos/aurelio-finance/wiki/etf-overlap-and-portfolio-x-ray),
+[accumulating vs distributing ETFs](https://github.com/LosaLosSantos/aurelio-finance/wiki/accumulating-vs-distributing-etf),
+[how many months of emergency fund](https://github.com/LosaLosSantos/aurelio-finance/wiki/how-many-months-of-emergency-fund-do-you-need)
+and [what an AI financial advisor costs](https://github.com/LosaLosSantos/aurelio-finance/wiki/how-much-does-an-ai-financial-advisor-cost).
 
 ## The AI part
 
