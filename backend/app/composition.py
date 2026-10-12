@@ -33,6 +33,7 @@ import datetime
 import json
 import logging
 import re
+from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
@@ -704,6 +705,34 @@ def _held_more_than_once(fund: str, where: list[str]) -> str:
     )
 
 
+def _held(db: Session, conv: fx.Converter) -> list:
+    """The positions the look-through weighs: open, and worth something or
+    holding units."""
+    return [
+        p
+        for p in positions.project(db, conv)
+        if ((p.current_value or 0) > 0 or (p.quantity or 0) > 0) and not p.closed_on
+    ]
+
+
+def _composition_of(db: Session, p, refresh: bool) -> tuple[dict | None, str | None]:
+    """(the composition, or None; why there is none, or None) for one position,
+    fetched by its ticker or, with none, its ISIN (`_lookup_key`)."""
+    lookup = _lookup_key(p)
+    if not lookup:
+        return None, "no ticker or ISIN"
+    try:
+        return get_composition(db, lookup, refresh=refresh, isin=p.isin), None
+    except CompositionError as exc:
+        return None, str(exc)
+    except Exception as exc:
+        # One unresolvable instrument must never take the whole page
+        # down: a raw yfinance error on a single symbol used to 500 the
+        # entire look-through. It becomes this row's reason instead.
+        logger.warning("%s composition failed: %s: %s", p.symbol, type(exc).__name__, exc)
+        return None, f"{type(exc).__name__}: {exc}"
+
+
 def compute_portfolio_composition(db: Session, refresh: bool = False) -> dict:
     """Aggregate the look-through over the whole investment portfolio.
 
@@ -716,11 +745,24 @@ def compute_portfolio_composition(db: Session, refresh: bool = False) -> dict:
     # Its own converter, so the payload can say what the values are in — the
     # base they were converted to, not a second reading of it.
     conv = fx.Converter(db)
-    held = [
-        p
-        for p in positions.project(db, conv)
-        if ((p.current_value or 0) > 0 or (p.quantity or 0) > 0) and not p.closed_on
-    ]
+    fetched = [(p, *_composition_of(db, p, refresh)) for p in _held(db, conv)]
+    return _aggregate(db, conv, fetched)
+
+
+def _aggregate(
+    db: Session,
+    conv: fx.Converter,
+    fetched: list[tuple],
+    considered: tuple | None = None,
+    cut: int | None = 20,
+) -> dict:
+    """The look-through of the positions `fetched` ((position, composition,
+    why none) each), and of a purchase `considered` beside them when one is
+    given (`weigh_purchase`), which is weighed as a held position is and never
+    counted as one held twice. `cut` keeps the companies and the overlap to the
+    largest; None keeps them all."""
+    entries = fetched + ([considered] if considered is not None else [])
+    held = [p for p, _, _ in entries]
     # Weighted by what each position is worth NOW, not by what it cost. A fund
     # that tripled carries three times the exposure it was bought with, and
     # weighting by cost would report a third of the real risk.
@@ -745,7 +787,7 @@ def compute_portfolio_composition(db: Session, refresh: bool = False) -> dict:
     holdings_from: dict[str, list[str]] = {}
     decomposed_weight = 0.0
 
-    for p in held:
+    for p, comp, error in entries:
         weight = p.current_value / total_value
         row = {
             "symbol": p.symbol,
@@ -758,27 +800,11 @@ def compute_portfolio_composition(db: Session, refresh: bool = False) -> dict:
             "fetched_at": None,
             "holdings_count": None,
             "decomposed": False,
-            "error": None,
+            "error": error,
         }
-        comp = None
         # Not `key`: the overlap loop below names each company `key`, and a
         # first draft of this that shared the name listed MODERNA as a fund.
         lookup = _lookup_key(p)
-        if lookup:
-            try:
-                comp = get_composition(db, lookup, refresh=refresh, isin=p.isin)
-            except CompositionError as exc:
-                row["error"] = str(exc)
-            except Exception as exc:
-                # One unresolvable instrument must never take the whole page
-                # down: a raw yfinance error on a single symbol used to 500 the
-                # entire look-through. It becomes this row's reason instead.
-                logger.warning(
-                    "%s composition failed — %s: %s", p.symbol, type(exc).__name__, exc
-                )
-                row["error"] = f"{type(exc).__name__}: {exc}"
-        else:
-            row["error"] = "no ticker or ISIN"
         if comp is not None and (comp["countries"] or comp["sectors"]):
             row.update(
                 resolved_name=comp["name"],
@@ -792,7 +818,9 @@ def compute_portfolio_composition(db: Session, refresh: bool = False) -> dict:
             # The fund's identity for counting: its ISIN, or the key it was
             # fetched by when no ISIN was ever found for it.
             fund_id = comp["isin"] or lookup
-            if comp["isin"]:
+            # A purchase considered beside a fund already held is not that
+            # fund held twice: it is the question being asked.
+            if comp["isin"] and (considered is None or p is not considered[0]):
                 held_as.setdefault(comp["isin"], []).append(_position_label(p, institutions))
                 if comp["name"]:
                     fund_names[comp["isin"]] = comp["name"]
@@ -900,8 +928,8 @@ def compute_portfolio_composition(db: Session, refresh: bool = False) -> dict:
         ],
         "countries": _ranked(countries),
         "sectors": _ranked(sectors),
-        "companies": companies[:20],
-        "overlap": overlapped[:20],
+        "companies": companies[:cut] if cut else companies,
+        "overlap": overlapped[:cut] if cut else overlapped,
         # share of the portfolio the look-through actually covers
         "coverage_pct": round(decomposed_weight * 100, 2),
         # The denominator the weights are shares OF: what the portfolio is
@@ -911,6 +939,110 @@ def compute_portfolio_composition(db: Session, refresh: bool = False) -> dict:
         "total_value": round(total_value, 2),
         "base_currency": conv.base,
         "notes": notes,
+    }
+
+
+# --- A purchase considered (brief AQ) -------------------------------------------
+
+
+@dataclass(frozen=True)
+class Purchase:
+    """A purchase considered and not made: a fund by its ISIN from the
+    catalogue, or a share by the symbol Yahoo lists it under, and the sum that
+    would go in, in the base currency."""
+
+    name: str
+    value: float
+    isin: str | None = None
+    symbol: str | None = None
+
+
+@dataclass(frozen=True)
+class _Considered:
+    """A purchase, in the shape the aggregation reads a held position in."""
+
+    symbol: str | None
+    isin: str | None
+    asset_name: str
+    asset_class: str | None
+    current_value: float
+    institution_id: int | None = None
+
+
+# How many names each axis says: those whose share moves most.
+MOVES = 5
+
+
+def _moves(before: list[dict], after: list[dict]) -> list[dict]:
+    """The names whose share moves most from `before` to `after`, largest move
+    first, each with both shares; a name under 0.01% on one side reads 0."""
+    was = {e["name"]: e["pct"] for e in before}
+    now = {e["name"]: e["pct"] for e in after}
+
+    def moved(name: str) -> float:
+        return abs(now.get(name, 0.0) - was.get(name, 0.0))
+
+    return [
+        {"name": name, "before_pct": was.get(name, 0.0), "after_pct": now.get(name, 0.0)}
+        for name in sorted(set(was) | set(now), key=moved, reverse=True)[:MOVES]
+        if moved(name) >= 0.01
+    ]
+
+
+def weigh_purchase(db: Session, purchase: Purchase) -> dict:
+    """What the look-through would read with `purchase` held beside what is,
+    against what it reads now: its weight in the investments, the countries,
+    sectors, currencies and companies that move most, the companies it holds
+    that are already held through another position, and how much of the
+    investments the look-through sees inside, before and after.
+
+    The purchase's composition is fetched as a held position's is
+    (`get_composition`: the cache, else the issuers' waterfall; a share
+    resolves to itself), and each held position's once, for both readings. A
+    purchase nothing can look inside (a commodity, a coin) is weighed and said
+    as that, with no axis: the axes would only shrink by its size."""
+    conv = fx.Converter(db)
+    fetched = [(p, *_composition_of(db, p, False)) for p in _held(db, conv)]
+    before = _aggregate(db, conv, fetched, cut=None)
+    position = _Considered(
+        symbol=purchase.symbol,
+        isin=purchase.isin,
+        asset_name=purchase.name,
+        asset_class=None,
+        current_value=purchase.value,
+    )
+    comp, why_not = _composition_of(db, position, False)
+    after = _aggregate(db, conv, fetched, (position, comp, why_not), cut=None)
+    inside = comp is not None and bool(comp["countries"] or comp["sectors"])
+    key = _lookup_key(position)
+    held_before = {_company_key(e["name"]): e["pct"] for e in before["companies"]}
+    return {
+        "name": purchase.name,
+        "amount": round(purchase.value, 2),
+        "currency": conv.base,
+        "investments_before": round(sum(p.current_value for p, _, _ in fetched), 2),
+        "investments_after": after["total_value"],
+        "its_weight_in_the_investments_pct": round(purchase.value / after["total_value"] * 100, 2),
+        "looked_inside": inside,
+        "why_not": None if inside else (why_not or "no source gives its countries or sectors"),
+        "source": comp["source"] if inside else None,
+        "fetched_at": comp["fetched_at"] if inside else None,
+        "moves": {
+            axis: _moves(before[axis], after[axis]) if inside else []
+            for axis in ("countries", "sectors", "currencies", "companies")
+        },
+        "already_held_through_other_positions": [
+            {
+                "name": e["name"],
+                "before_pct": held_before.get(_company_key(e["name"]), 0.0),
+                "after_pct": e["pct"],
+                "held_through": [f for f in e["funds"] if f != key],
+            }
+            for e in after["overlap"]
+            if key in e["funds"]
+        ][:MOVES],
+        "coverage_before_pct": before["coverage_pct"] if fetched else 0.0,
+        "coverage_after_pct": after["coverage_pct"],
     }
 
 

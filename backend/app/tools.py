@@ -96,7 +96,7 @@ from sqlalchemy.orm import Session
 
 from app import (
     advisor, analytics, cash_moves, catalogue, chain, composition, crud, dated, fx, models, pac,
-    positions, prices, questionnaire, schemas,
+    positions, prices, questionnaire, schemas, sizing,
 )
 from app.database import unit_of_work
 
@@ -513,6 +513,186 @@ def _lookup_symbol(db: Session, args: LookupSymbolArgs) -> dict:
         "reachable": bool(results),
         "reading": list(_LOOKUP_READING),
     }
+
+
+# --- How much: the figures an amount stands on, computed (brief AQ) ------------------
+#
+# A read and not part of the picture, for the look-through's reason and one of
+# its own: what a purchase would weigh walks the issuers for an instrument the
+# reader does not hold, and the room alone is three computations the picture
+# would carry on every "hello". `sizing` computes the room, `composition` the
+# weights, and a card that carries an amount reads both again from the same
+# functions (`_propose_suggestion`).
+
+
+class SizePurchaseArgs(BaseModel):
+    """What `size_purchase` takes: nothing, for the room alone; or an
+    instrument named as a card names it, and the amounts to weigh."""
+
+    isin: MaybeText = Field(
+        default=None,
+        min_length=12,
+        max_length=12,
+        description=(
+            "A FUND: its ISIN, copied from a `search_catalogue` result. Null for a "
+            "single share, and for the figures alone."
+        ),
+    )
+    symbol: MaybeText = Field(
+        default=None,
+        description=(
+            "A single SHARE: the exact symbol of a `lookup_symbol` result whose "
+            "quote_type is equity, with `isin` null. Null for a fund, and for the "
+            "figures alone."
+        ),
+    )
+    amount_now: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "A sum put in at once, in the base currency of the picture: what it "
+            "would weigh, and whether the cash above the reserve holds it."
+        ),
+    )
+    amount_monthly: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "A sum put in every month, in the base currency: its share of what is "
+            "left each month once the PACs and the goals' contributions are taken out."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _one_instrument_at_most(self):
+        if self.isin and (self.symbol or "").strip():
+            raise ValueError("Name a fund by its ISIN or a share by its symbol, not both.")
+        return self
+
+
+# What the figures MEAN, travelling with them, for the look-through's reason:
+# the prompt does not travel with a tool's result into the next turn, and this
+# does.
+_SIZE_READING = (
+    "Every figure here is computed by the app from their records. Quote them as "
+    "they are, with where they come from, and never work out a reserve, what is "
+    "left each month, a goal's need or a weight yourself.",
+    "on_the_accounts is every account's cash added up, an account below zero "
+    "netted in it, so the room above the reserve already counts that deficit: "
+    "covering it from another of their accounts is a transfer between them, "
+    "which leaves the sum and the room as they are. Never take it off the room "
+    "a second time.",
+    "The reserve is its months of the essential expenses in force, an expense "
+    "with no nature counted as essential. Its months come from where months_from "
+    "says: their answer in the Profile, or the app's default, which you say is "
+    "the app's and never theirs.",
+    "cash_above_reserve is the most a sum put in now may be, and "
+    "left_after_commitments the most a monthly amount may be: what the records "
+    "allow, not advice. An amount is chosen within them with its assumptions "
+    "said, and a card refuses one above them.",
+    "A goal's needs_a_month_with_no_growth stands beside what is recorded for it "
+    "and is not taken out of what is left; its recorded contribution is, and "
+    "lacks_a_month is what the need asks beyond it. "
+    "left_if_each_goal_gets_its_need is what is left each month were every goal "
+    "given its need. Say what you assume about a goal that lacks something.",
+    "null means the records cannot say: no expense in force sizes no reserve, "
+    "and no income or no expense in force leaves nothing to say about the "
+    "month. Say what they would have to enter, never a figure in its place.",
+    "In `weighs`, every percentage is a share of the investments, before and "
+    "after the purchase, read as the look-through reads them. looked_inside "
+    "false means no source could look inside it, which says nothing about what "
+    "it holds.",
+)
+
+
+def _listing_currency(symbol: str) -> str | None:
+    """The currency Yahoo quotes the listing in, as it spells it ("GBp" is
+    pence), or None when Yahoo names none or does not answer: never inferred
+    from the exchange."""
+    try:
+        return prices._fetch_currency(symbol)
+    except Exception as exc:  # silent Yahoo: the currency is "not given"
+        logger.info("Listing currency of %s not given: %s: %s", symbol, type(exc).__name__, exc)
+        return None
+
+
+def _fund_facts(row: models.Instrument) -> dict:
+    """A catalogue row as the chat reads it, every fact off the registry."""
+    return {
+        "kind": "fund",
+        "isin": row.isin,
+        "name": row.name,
+        "distribution": _POLICY_WORDS.get((row.distribution_policy or "").strip().lower()),
+        "ter_pct": row.ter,
+        "domicile": row.domicile,
+        "replication": row.replication,
+        "size_meur": row.size_meur,
+        "holdings": row.holdings_count,
+        "share_class_currency": row.share_class_currency,
+        "registry": "justETF's list of products for private investors in Europe, as the app downloaded it",
+    }
+
+
+def _share_facts(share: dict) -> dict:
+    """A share as Yahoo lists it, with the currency its listing is quoted in."""
+    return {
+        "kind": "share",
+        "symbol": share["symbol"],
+        "name": share["name"],
+        "exchange": share.get("exchange"),
+        "listing_currency": _listing_currency(share["symbol"]) or "not given by Yahoo",
+    }
+
+
+def _percent(part: float, whole: float | None) -> float | None:
+    return round(part / whole * 100, 2) if whole else None
+
+
+def _size_purchase(db: Session, args: SizePurchaseArgs) -> dict:
+    """The room an amount stands on (`sizing`), and for an instrument named as
+    a card names it and a sum, what that sum would weigh (`composition`).
+
+    An instrument the catalogue or Yahoo does not verify is said as refused,
+    with the reason a card would give, and the room comes back all the same:
+    the figures do not depend on it."""
+    found = sizing.room(db)
+    out: dict = {"room": sizing.as_dict(found)}
+    purchase = None
+    if args.isin or args.symbol:
+        try:
+            if args.isin:
+                row = _catalogue_row(db, args.isin)
+                out["instrument"] = _fund_facts(row)
+                purchase = {"name": row.name, "isin": row.isin}
+            else:
+                share = _listed_share(args.symbol)
+                out["instrument"] = _share_facts(share)
+                purchase = {"name": share["name"], "symbol": share["symbol"]}
+        except LookupError as exc:
+            out["instrument"] = {"refused": str(exc)}
+    if args.amount_now is not None:
+        room = found.cash_above_reserve
+        now: dict = {
+            "amount": args.amount_now,
+            "share_of_financial_wealth_pct": _percent(args.amount_now, found.financial_wealth),
+            "within_cash_above_reserve": None if room is None else args.amount_now <= room + 0.005,
+        }
+        if purchase is not None:
+            now["weighs"] = composition.weigh_purchase(
+                db, composition.Purchase(value=args.amount_now, **purchase)
+            )
+        out["now"] = now
+    if args.amount_monthly is not None:
+        left = found.left_after_commitments
+        out["each_month"] = {
+            "amount": args.amount_monthly,
+            "share_of_left_after_commitments_pct": (
+                _percent(args.amount_monthly, left) if left and left > 0 else None
+            ),
+            "within_left_after_commitments": None if left is None else args.amount_monthly <= left + 0.005,
+        }
+    out["reading"] = list(_SIZE_READING)
+    return out
 
 
 # --- The writes ---------------------------------------------------------------
@@ -4578,6 +4758,26 @@ REGISTRY: dict[str, Tool] = {
             ),
             arguments=LookupSymbolArgs,
             run=_lookup_symbol,
+        ),
+        Tool(
+            name="size_purchase",
+            description=(
+                "Compute HOW MUCH from their records: the figures an amount stands "
+                "on, and what a purchase would weigh. With no argument: the cash on "
+                "their accounts, the reserve of essential expenses kept aside (its "
+                "months from their Profile, or the app's default), the cash above "
+                "it, what is left each month once the PACs and the goals' recorded "
+                "contributions are taken out, and what each goal needs a month. "
+                "With a fund's ISIN from `search_catalogue` or a share's exact "
+                "symbol from `lookup_symbol`, and a sum: what the sum would weigh "
+                "in their wealth and in their investments, and how the "
+                "look-through's countries, sectors, currencies and companies would "
+                "move. Call it before saying any amount, for a purchase or for what "
+                "they can put aside, and quote its figures. It only reads, and can "
+                "take seconds when an instrument's holdings have to be fetched."
+            ),
+            arguments=SizePurchaseArgs,
+            run=_size_purchase,
         ),
         Tool(
             name="add_real_asset",
