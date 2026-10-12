@@ -403,7 +403,14 @@ def test_the_readers_400_reads_as_a_sentence_with_what_to_do(loaded, monkeypatch
             "it does not accept the API key in backend/.env (OPENROUTER_API_KEY)",
             "Check the key on openrouter.ai, put the right one in backend/.env, and start the app again.",
         ),
-        (402, "the account behind the API key has no credit left", "Add credit on openrouter.ai, then ask again."),
+        (
+            # A 402 that names no source (brief AP): the key or its account, and
+            # where to act on either.
+            402,
+            "the API key or the account behind it does not have the credit this request needs",
+            "Add credit, or raise the key's limit, on openrouter.ai (Settings, Credits or Keys), "
+            "then ask again.",
+        ),
         (
             403,
             "a moderation flag, a guardrail or a permission on the key stopped it",

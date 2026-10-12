@@ -1439,12 +1439,12 @@ def _where_set(model: str) -> str:
 # moderation flag, 408 a timeout, 429 rate limiting, 502 a model that is down
 # or answered something invalid, 503 no provider meeting the request. 404 is
 # not on that page, and is what it answered for a model it had no endpoint for
-# (brief W part 2).
+# (brief W part 2). A 402 is said by what OpenRouter names as its cause
+# (`_short_of_credit`), not here.
 _REFUSAL_MEANS = {
     400: "the request the app built is not one it accepts, which is the app's "
     "fault and not your question's",
     401: "it does not accept the API key in backend/.env (OPENROUTER_API_KEY)",
-    402: "the account behind the API key has no credit left",
     403: "a moderation flag, a guardrail or a permission on the key stopped it",
     404: "it has nowhere to send it",
     408: "the model took too long to answer",
@@ -1468,8 +1468,6 @@ def _remedy(status: int, chat: bool) -> str:
             "Check the key on openrouter.ai, put the right one in backend/.env, "
             "and start the app again."
         )
-    if status == 402:
-        return "Add credit on openrouter.ai, then ask again."
     if status == 403:
         return f"Rephrase it, or {another}."
     if status == 408:
@@ -1479,6 +1477,72 @@ def _remedy(status: int, chat: bool) -> str:
     if status == 404 or status >= 500:
         return f"Ask again in a few minutes, or {another}."
     return f"Ask again; if it happens again, {another}."
+
+
+# What turned a request away for want of money, as OpenRouter names it in a
+# 402's `error.metadata.limit_source`. Its page on limits (read 2026-10-12)
+# names three and says to branch on them, never on the words of the
+# `remedy_hint` beside them: the key's own limit, the account's credit, and the
+# requests still running on the account, which pass. Until brief AP every 402
+# was said as "the account behind the API key has no credit left", and brief
+# AO's paid run met one that said nothing of the kind: the key's limit could
+# not cover the most the request might write ("This request requires more
+# credits, or fewer max_tokens", with the tokens asked for and those the key
+# could still pay for), while a reply costs cents. No 402 measured or documented says
+# that the credit is gone, so the app's own words never do; when OpenRouter's
+# message says so, the reader reads it there, after "OpenRouter said".
+_KEY_LIMIT = "openrouter_key_limit"
+_CREDITS = "openrouter_credits"
+_IN_FLIGHT = "openrouter_in_flight_budget"
+
+# The two figures in OpenRouter's message when the most a request may write is
+# what cannot be paid for (measured in brief AO's P1 bis).
+_AFFORDS = re.compile(r"requested up to (\d+) tokens, but can only afford (\d+)")
+
+
+def _short_of_credit(error, body: dict) -> tuple[str, str]:
+    """What a 402 means for the reader and what they can do about it, by its
+    source: the key's limit, the account's credit, the account's requests
+    still running, or a 402 that names none. With the tokens the request may
+    write and those that can be paid for, when OpenRouter gives them."""
+    metadata = body.get("metadata") if isinstance(body.get("metadata"), dict) else {}
+    source = metadata.get("limit_source")
+    found = _AFFORDS.search(str(body.get("message") or ""))
+
+    def figures(payer: str) -> str:
+        if found is None:
+            return ""
+        return (
+            f", which may write up to {int(found[1]):,} tokens while {payer} can pay "
+            f"for {int(found[2]):,}"
+        )
+
+    if source == _KEY_LIMIT:
+        return (
+            "what the API key may still spend under its limit does not cover this "
+            "request" + figures("the key"),
+            "Raise or remove the key's limit on openrouter.ai (Settings, Keys), then ask again.",
+        )
+    if source == _CREDITS:
+        return (
+            "the credit on the account behind the API key does not cover this request"
+            + figures("the credit"),
+            "Add credit on openrouter.ai (Settings, Credits), then ask again.",
+        )
+    if source == _IN_FLIGHT:
+        wait = str(error.response.headers.get("retry-after", "")).strip()
+        when = f"{int(wait)} seconds" if wait.isdigit() else "a moment"
+        return (
+            "the requests still running on the account, or just finished, are using "
+            "what OpenRouter lets it spend at once",
+            f"Wait {when}, then ask again; adding credit on openrouter.ai raises that amount.",
+        )
+    return (
+        "the API key or the account behind it does not have the credit this request "
+        "needs" + figures("what is left"),
+        "Add credit, or raise the key's limit, on openrouter.ai (Settings, Credits or "
+        "Keys), then ask again.",
+    )
 
 
 def _refused(error: Exception, model: str, chat: bool = False) -> AdvisorError:
@@ -1494,8 +1558,11 @@ def _refused(error: Exception, model: str, chat: bool = False) -> AdvisorError:
     `_remedy`), with OpenRouter's own message after it. Until brief AJ it was
     that message alone, which is how the reader met a 400 on 2026-10-08:
     'Server tool "openrouter:web_search" failed: invalid request (400)', and
-    nothing about what it meant for them or what to do. A failure that is not
-    a refusal (no network, a timeout) says that, with the SDK's words.
+    nothing about what it meant for them or what to do. A 402 says what
+    OpenRouter names as its cause, with its figures (`_short_of_credit`), and
+    is never asked again, by the chat or by the analysis (ASKED_AGAIN_ON). A
+    failure that is not a refusal (no network, a timeout) says that, with the
+    SDK's words.
 
     `chat` is whether the call answers the chat, where another model is one
     menu away; the analysis's models are set in backend/.env.
@@ -1518,11 +1585,14 @@ def _refused(error: Exception, model: str, chat: bool = False) -> AdvisorError:
     body = error.body if isinstance(error.body, dict) else {}
     said = str(body.get("message") or error.message).strip().rstrip(".")
     status = error.status_code
-    means = _REFUSAL_MEANS.get(status)
+    if status == 402:
+        means, remedy = _short_of_credit(error, body)
+    else:
+        means, remedy = _REFUSAL_MEANS.get(status), _remedy(status, chat)
     refused = (
         f"OpenRouter refused the call to {model} with {status}"
         + (f": {means}. " if means else ". ")
-        + f"{_remedy(status, chat)} OpenRouter said: {said}."
+        + f"{remedy} OpenRouter said: {said}."
     )
     if status not in (400, 404):
         return AdvisorError(refused)
