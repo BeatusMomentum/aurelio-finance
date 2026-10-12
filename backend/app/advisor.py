@@ -1559,7 +1559,13 @@ _WHY = {
 
 
 def _unfinished(
-    reason: str | None, native: str | None, cost: float | None, *, wrote: bool
+    reason: str | None,
+    native: str | None,
+    cost: float | None,
+    *,
+    wrote: bool,
+    ceiling: int | None = None,
+    per: str = "",
 ) -> Unfinished:
     """The sentence for an answer that ended on anything but a normal stop:
     why, in words, then what OpenRouter and the provider reported, verbatim.
@@ -1567,9 +1573,19 @@ def _unfinished(
     `wrote` tells "before finishing its answer" from "before writing" it.
     Measured on 2026-10-02: a model that spends its whole limit reasoning ends
     on `length` with no text at all, and was refused as "an empty response",
-    which said nothing about why."""
+    which said nothing about why.
+
+    `ceiling` is the `max_tokens` the request was sent with, and `per` what it
+    bounds ("a reply", "a step"): an answer cut there says the figure, since
+    every request names one (brief AP), and "its length limit" alone left the
+    reader to guess how long that was."""
     if reason is None:
         why = "the provider never said it had finished"
+    elif reason == "length" and ceiling is not None:
+        why = (
+            f"it reached its length limit, the {ceiling:,} tokens the app allows {per}, "
+            "its reasoning included"
+        )
     else:
         why = _WHY.get(reason, f'it stopped for a reason OpenRouter calls "{reason}"')
     reported = ""
@@ -1613,6 +1629,36 @@ def _failed_partway(failure, cost: float | None) -> Unfinished:
 ASKED_AGAIN_ON = (500, 502, 503)
 
 
+# --- How much one request may write ------------------------------------------------
+
+# Every request the app sends names the most its answer may be, its reasoning
+# included: OpenRouter counts reasoning inside `max_tokens` (its page on
+# reasoning tokens, read 2026-10-12). Until brief AP the chat's rounds and the
+# analysis's steps named none, and OpenRouter then holds, against what the key
+# may still spend, the input and a fixed cap of output (its page on limits,
+# read the same day). Brief AO's paid run met that cap on 2026-10-11: 65,536
+# tokens on Opus 5.5, $1.31 at $20 per million, refused with a 402 at the sixth
+# request ("requires more credits, or fewer max_tokens") while a reply costs
+# cents. The web search names its own (`websearch.MAX_TOKENS`).
+#
+# Each ceiling is set from the longest answers on record, Opus 5.5 through the
+# app's own loop with nothing capped, and an answer that reaches it is cut
+# (`Unfinished`, whose sentence says the figure).
+#
+# A round of the chat: 8,192 tokens, $0.16 held on Opus. The longest reply on
+# record is 2,316 tokens, 626 of them reasoning (brief AG's paid proof,
+# 2026-10-06: an advice answer written from five web pages), 28% of it; the
+# most a round reasoned is 718 (brief AN's P1 bis).
+CHAT_MAX_TOKENS = 8_192
+
+# A step of the analysis: 16,384 tokens, $0.33 held on Opus. The longest step
+# on record is the analyst's, 4,361 tokens with 1,584 of reasoning (brief AD's
+# run, 2026-10-05, on a test copy), 27% of it. More room than a reply's: a step
+# cut stops the run and loses what its steps had already cost, and an analyst's
+# step on records larger than that copy's has not been measured.
+STEP_MAX_TOKENS = 16_384
+
+
 def call_llm(system_prompt: str, user_content: str, model: str | None = None) -> dict:
     """Shared OpenRouter call. `model` overrides the configured default, so a
     chain can give each role its own model. Returns {"analysis", "model",
@@ -1629,6 +1675,9 @@ def call_llm(system_prompt: str, user_content: str, model: str | None = None) ->
     text that comes back with it reads like any other: the analysis of run 1
     stopped at "The top four" and nothing downstream could tell.
 
+    Both asks name STEP_MAX_TOKENS, so a key near its limit is held only what
+    a step can cost (brief AP).
+
     It asks the provider for no cache, unlike the chat (`stream_llm`), and on
     purpose. The chain's steps each have a system prompt of their own, and the
     system prompt comes first in what a provider caches, so no step can read
@@ -1644,13 +1693,17 @@ def call_llm(system_prompt: str, user_content: str, model: str | None = None) ->
     ]
     asked_again = None
     try:
-        completion = client.chat.completions.create(model=model, messages=messages)
+        completion = client.chat.completions.create(
+            model=model, messages=messages, max_tokens=STEP_MAX_TOKENS
+        )
     except Exception as exc:  # network / auth / model errors -> a sentence (_refused)
         status = getattr(exc, "status_code", None)
         if not isinstance(exc, sdk().APIStatusError) or status not in ASKED_AGAIN_ON:
             raise _refused(exc, model) from exc
         try:
-            completion = client.chat.completions.create(model=model, messages=messages)
+            completion = client.chat.completions.create(
+                model=model, messages=messages, max_tokens=STEP_MAX_TOKENS
+            )
         except Exception as again:
             refused = _refused(again, model)
             refused.args = (
@@ -1672,6 +1725,8 @@ def call_llm(system_prompt: str, user_content: str, model: str | None = None) ->
             getattr(choice, "native_finish_reason", None),
             _cost(completion),
             wrote=bool(content),
+            ceiling=STEP_MAX_TOKENS,
+            per="a step",
         )
     if not content:
         raise AdvisorError("The model returned an empty response.")
@@ -1838,7 +1893,9 @@ def stream_llm(
     And `Unfinished` at the END, after the words have gone out, when the
     stream ended on anything but `stop`, or `tool_calls` for a round that asks
     for tools: a token cap ends it on `length` (measured on 2026-10-02), and
-    a stream that closes without saying how it ended has not said it finished.
+    every round names one, CHAT_MAX_TOKENS (brief AP), the round with no tools
+    included; a stream that closes without saying how it ended has not said
+    it finished.
     The words are not taken back; they are what the reader saw. What changes
     is that the turn cannot end as `done`. The tool calls of such a round are
     not handed on: their arguments may have stopped mid-JSON, and nothing
@@ -1890,6 +1947,7 @@ def stream_llm(
             messages=[{"role": "system", "content": system}, *asked],
             stream=True,
             stream_options={"include_usage": True},
+            max_tokens=CHAT_MAX_TOKENS,
             **({"tools": tools} if tools else {}),
             **({"extra_body": extra} if extra else {}),
         )
@@ -1959,7 +2017,9 @@ def stream_llm(
         # that was cut still cost what it was sent.
         if received is not None:
             yield ("usage", received)
-        raise _unfinished(ended, native, None, wrote=produced)
+        raise _unfinished(
+            ended, native, None, wrote=produced, ceiling=CHAT_MAX_TOKENS, per="a reply"
+        )
     for index in sorted(building):
         produced = True
         yield ("tool_call", ToolCall(**building[index]))

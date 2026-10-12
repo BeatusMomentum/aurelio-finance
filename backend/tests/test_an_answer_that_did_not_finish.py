@@ -200,9 +200,11 @@ def test_a_later_step_that_did_not_finish_stops_the_run_and_keeps_nothing(client
             _drain(db)
         assert _rows(db) == (0, 0)
     said = str(stopped.value)
+    # The ceiling every step names since brief AP, said with the cut.
     assert said.startswith(
-        "The model stopped before finishing its answer: it reached its length limit "
-        "(OpenRouter reported length, the provider max_tokens)."
+        "The model stopped before finishing its answer: it reached its length limit, the "
+        "16,384 tokens the app allows a step, its reasoning included (OpenRouter reported "
+        "length, the provider max_tokens)."
     ), said
     assert 'The analysis stopped at step 3, "What this means for you", and nothing from this run was kept.' in said
     # The cut step is billed like any other, so its own price is in the sum.
@@ -276,8 +278,9 @@ def test_a_model_that_spent_its_limit_reasoning_is_said_to_have_written_nothing(
     with pytest.raises(advisor.Unfinished) as stopped:
         advisor.call_llm("s", "u", model="m")
     assert str(stopped.value) == (
-        "The model stopped before writing its answer: it reached its length limit "
-        "(OpenRouter reported length)."
+        "The model stopped before writing its answer: it reached its length limit, the "
+        "16,384 tokens the app allows a step, its reasoning included (OpenRouter reported "
+        "length)."
     )
     assert stopped.value.cost == 0.000248
 
@@ -312,8 +315,9 @@ def test_a_chat_answer_the_provider_cut_is_kept_and_never_stored_as_done(client,
     assert answer["status"] == "error"
     assert _text(answer) == "Your cash covers about", "the words the reader saw are the words on record"
     assert answer["detail"] == (
-        "The model stopped before finishing its answer: it reached its length limit "
-        "(OpenRouter reported length, the provider max_tokens)."
+        "The model stopped before finishing its answer: it reached its length limit, the "
+        "8,192 tokens the app allows a reply, its reasoning included (OpenRouter reported "
+        "length, the provider max_tokens)."
     )
     # What the turn was sent is still recorded: the cost of a cut turn is not
     # the cost of no turn.
