@@ -198,7 +198,14 @@ def yahoo(monkeypatch):
             raise ConnectionError("Yahoo is down")
         return [dict(row) for row in Fake.lists.get(query.upper(), [])]
 
+    def currency(symbol):
+        # The listing's currency, which a share's card says since brief AQ.
+        if Fake.silent:
+            raise ConnectionError("Yahoo is down")
+        return "EUR"
+
     monkeypatch.setattr(prices, "_fetch_lookup", lookup)
+    monkeypatch.setattr(prices, "_fetch_currency", currency)
     Fake.lists, Fake.silent, Fake.asked = {"ACME.MI": [ACME]}, False, []
     return Fake
 
@@ -228,7 +235,7 @@ def test_a_share_yahoo_lists_is_put_up_and_kept_by_its_symbol(client, yahoo):
     the three sentences."""
     with SessionLocal() as db:
         card = _suggest(db, symbol="acme.mi", **WHY)["card"]
-        assert card["title"] == "watch: Acme Industrie, ACME.MI · share · MIL"
+        assert card["title"] == "watch: Acme Industrie, ACME.MI · share · MIL · quoted in EUR"
         assert card["verb"] == "Add to watchlist"
         assert "gives no ISIN" in card["consequence"]
         assert crud.get_watchlist_items(db) == [], "nothing is written before the reader says yes"
@@ -447,6 +454,15 @@ def test_the_prompt_and_the_tool_say_up_to_three_and_what_gets_none():
 # --- The migration ----------------------------------------------------------------
 
 
+# The columns the table had when this migration was written, read by name: a
+# start now also runs the migrations after it, which add columns of their own
+# (brief AQ's amounts), and this test is about what this one keeps.
+_THEN = (
+    "SELECT id, isin, symbol, name, reason, based_on, unknowns, added_at "
+    "FROM watchlist_items ORDER BY id"
+)
+
+
 @pytest.fixture
 def before_the_share_migration(tmp_path, start_on):
     """A file the real chain built up to the revision before `5a4336780500`,
@@ -475,7 +491,7 @@ def test_the_migration_keeps_every_line_and_lets_a_share_have_no_isin(before_the
             ("XA0000000011", None, "Example Equity Fund 1", "Why.", "Because.", "Not known.",
              "2026-09-30T10:00:00"),
         )
-        before = conn.execute("SELECT * FROM watchlist_items").fetchall()
+        before = conn.execute(_THEN).fetchall()
 
     database.init_db()
 
@@ -484,7 +500,7 @@ def test_the_migration_keeps_every_line_and_lets_a_share_have_no_isin(before_the
     )
     assert len(copies) == 1, "the app copied the file before migrating it"
     with closing(sqlite3.connect(path)) as conn, conn:
-        assert conn.execute("SELECT * FROM watchlist_items").fetchall() == before
+        assert conn.execute(_THEN).fetchall() == before
         columns = {row[1]: row for row in conn.execute("PRAGMA table_info(watchlist_items)")}
         assert columns["isin"][3] == 0, "isin is no longer NOT NULL"
         assert columns["name"][3] == 1
@@ -506,4 +522,4 @@ def test_the_migration_keeps_every_line_and_lets_a_share_have_no_isin(before_the
     with closing(sqlite3.connect(path)) as conn, conn:
         columns = {row[1]: row for row in conn.execute("PRAGMA table_info(watchlist_items)")}
         assert columns["isin"][3] == 1
-        assert conn.execute("SELECT * FROM watchlist_items").fetchall() == before
+        assert conn.execute(_THEN).fetchall() == before

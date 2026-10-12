@@ -1238,6 +1238,24 @@ class WatchlistItemBase(BaseModel):
     unknowns: str = Field(
         ..., min_length=1, description="What the suggestion does NOT know about them"
     )
+    # The amount a card was sized with, when it carried one (brief AQ): chosen
+    # by the chat within what the records allowed, which the app computed.
+    amount_now: float | None = Field(
+        default=None, gt=0, description="A sum to put in at once, in amount_currency"
+    )
+    amount_monthly: float | None = Field(
+        default=None, gt=0, description="A sum to put in each month, in amount_currency"
+    )
+    amount_currency: str | None = Field(
+        default=None, description="The currency of the amounts: the base on the day they were sized"
+    )
+    amount_assumptions: str | None = Field(
+        default=None, description="What the amounts assumed, in the chat's words"
+    )
+    amount_figures: str | None = Field(
+        default=None,
+        description="What the amounts stood on, in the app's words, with the day they were computed",
+    )
 
     @model_validator(mode="after")
     def _names_something(self):
@@ -1251,6 +1269,12 @@ class WatchlistItemBase(BaseModel):
 
 class WatchlistItemCreate(WatchlistItemBase):
     """Payload to park one idea on the watchlist."""
+
+    # A code, checked on the way in as every stated currency is (on the Create
+    # only, for the reason written above `StatedCurrency`).
+    amount_currency: StatedCurrency | None = Field(
+        default=None, description="The currency of the amounts: the base on the day they were sized"
+    )
 
 
 class WatchlistItemRead(WatchlistItemBase):

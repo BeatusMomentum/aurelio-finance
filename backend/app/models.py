@@ -989,3 +989,13 @@ class WatchlistItem(Base):
     # watchlist line is read as "added on", and the identity check in
     # tests/test_write_contract.py knows both names for the same reason.
     added_at: Mapped[str] = mapped_column(String, default=_utcnow_iso, nullable=False)
+    # The amount its card was sized with, when it carried one (brief AQ,
+    # migration 491fe57d31db, which adds them after `added_at`): what to put in
+    # now and each month, the currency they were in, what they assumed in the
+    # chat's words, and what they stood on in the app's, with that day. Null on
+    # a line whose card had none.
+    amount_now: Mapped[float | None] = mapped_column(Float, nullable=True)
+    amount_monthly: Mapped[float | None] = mapped_column(Float, nullable=True)
+    amount_currency: Mapped[str | None] = mapped_column(String, nullable=True)
+    amount_assumptions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    amount_figures: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -5,7 +5,7 @@ import {
   type WatchlistItem,
 } from "../api/watchlist";
 import { RowsOrEmpty, Section, apiError, locale } from "./ui";
-import { identityOf, isShare } from "./watchItem";
+import { identityOf, isShare, sizedAs } from "./watchItem";
 
 /* The ideas the chat put in front of you, and what each one rested on.
 
@@ -58,6 +58,10 @@ function Item({
   // with Yahoo, and the line says so.
   const identity = identityOf(item);
   const what = isShare(item) ? "share" : "fund";
+  // The amount its card was sized with (brief AQ), and with it what the chat
+  // assumed and what the figures were that day: an amount read in a month is
+  // only worth what it stood on.
+  const sized = sizedAs(item);
   return (
     <li className="px-4 py-3">
       <div className="flex items-start justify-between gap-3">
@@ -98,6 +102,11 @@ function Item({
             fold: what a suggestion did not know is the half that ages worst,
             and it is the half a reader skips if it is made easy to skip. */}
         <Why label="Not known" text={item.unknowns} />
+        {sized && <Why label="Sized at" text={sized} />}
+        {sized && item.amount_assumptions && (
+          <Why label="Assumed" text={item.amount_assumptions} />
+        )}
+        {sized && item.amount_figures && <Why label="Stood on" text={item.amount_figures} />}
       </div>
     </li>
   );
@@ -137,7 +146,7 @@ export default function Watchlist({ onBuy }: { onBuy: (item: WatchlistItem) => v
     <Section
       title="Watchlist"
       hint="Instruments you were shown and kept. Nothing here is owned: no total, no allocation and no projection counts a line on this list."
-      note="Lines arrive from the chat. It may only name a fund that exists in the local registry or a share Yahoo lists, and the three sentences under each one are what it said at the time."
+      note="Lines arrive from the chat. It may only name a fund that exists in the local registry or a share Yahoo lists, and the three sentences under each one are what it said at the time. An amount on a line is what it proposed within what your records allowed that day, with what it assumed: educational information, not personalised regulated advice."
       explain={{
         question: "What does ‘record a buy’ do?",
         text: "No broker is connected, so ‘record a buy’ is exactly that: it fills the ledger form below with the fund or the share and leaves how many, at what price, where and when to you. It does not clear the line (an idea you bought a first tranche of is still an idea), so drop it with ✕ when you are done with it.",

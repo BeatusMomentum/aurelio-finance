@@ -139,6 +139,30 @@ _LINE = (
     " VALUES (?, ?, ?, 'Why.', 'Because.', 'Not known.', '2026-10-01T10:00:00')"
 )
 
+# The columns the table had when this migration was written, read by name: a
+# start now also runs the migrations after it, which add columns of their own
+# (brief AQ's amounts), and this test is about what this one changes.
+_THEN = (
+    "SELECT id, isin, symbol, name, reason, based_on, unknowns, added_at "
+    "FROM watchlist_items ORDER BY id"
+)
+
+
+@pytest.fixture
+def one_migration_behind(tmp_path, start_on):
+    """A file the real chain built up to `5a4336780500`, the revision before
+    this one, which the next `database.init_db()` starts on. Named by its
+    revision since the head moved (brief AQ, `491fe57d31db`): a start now runs
+    this migration and the ones after it."""
+    path = tmp_path / "data.db"
+    cfg = Config()
+    cfg.set_main_option("script_location", str(database.BASE_DIR / "alembic"))
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(database, "DATABASE_URL", f"sqlite:///{path}")
+        command.upgrade(cfg, "5a4336780500")
+    start_on(path)
+    return path
+
 
 def test_the_migration_clears_the_word_on_a_funds_line_and_nothing_else(one_migration_behind):
     """What the reader's `data.db` takes at its next start, behind the app's
@@ -156,21 +180,19 @@ def test_the_migration_clears_the_word_on_a_funds_line_and_nothing_else(one_migr
     with closing(sqlite3.connect(one_migration_behind)) as conn, conn:
         for line in lines:
             conn.execute(_LINE, line)
-        before = conn.execute("SELECT * FROM watchlist_items ORDER BY id").fetchall()
+        before = conn.execute(_THEN).fetchall()
 
     database.init_db()
 
     copies = list(
         one_migration_behind.parent.glob(
-            "data.db.bak-*-before-migration-5a4336780500-to-e62c6f6c8060"
+            "data.db.bak-*-before-migration-5a4336780500-to-*"
         )
     )
     assert len(copies) == 1, "the app copied the file before migrating it"
     with closing(sqlite3.connect(one_migration_behind)) as conn, conn:
-        after = conn.execute("SELECT * FROM watchlist_items ORDER BY id").fetchall()
-        symbol = [row[1] for row in conn.execute("PRAGMA table_info(watchlist_items)")].index(
-            "symbol"
-        )
+        after = conn.execute(_THEN).fetchall()
+        symbol = 2  # its place in _THEN
     assert [row[symbol] for row in after] == [None, None, None, "XFUN.DE", None, "NULL"]
     assert [row[:symbol] + row[symbol + 1:] for row in after] == [
         row[:symbol] + row[symbol + 1:] for row in before
@@ -180,6 +202,6 @@ def test_the_migration_clears_the_word_on_a_funds_line_and_nothing_else(one_migr
     cfg.set_main_option("script_location", str(database.BASE_DIR / "alembic"))
     command.downgrade(cfg, "5a4336780500")
     with closing(sqlite3.connect(one_migration_behind)) as conn, conn:
-        assert conn.execute("SELECT * FROM watchlist_items ORDER BY id").fetchall() == after, (
+        assert conn.execute(_THEN).fetchall() == after, (
             "the downgrade writes nothing back"
         )

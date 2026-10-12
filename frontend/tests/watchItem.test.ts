@@ -10,7 +10,8 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { identityOf, isShare, prefillNote } from "../src/components/watchItem.ts";
+import { money } from "../src/components/money.ts";
+import { identityOf, isShare, prefillNote, sizedAs } from "../src/components/watchItem.ts";
 
 const SHARE = { isin: null, symbol: "ACME.MI" };
 const FUND = { isin: "XA0000000011", symbol: "EXF1.MI" };
@@ -54,4 +55,30 @@ test("the ledger form says for a fund what it said before", () => {
     "XA0000000011. That identifies the fund but does not price it: the ticker of the listing you bought on is still yours to give." +
       YOURS,
   );
+});
+
+// --- Brief AQ: the amount a line's card was sized with ---------------------------
+
+test("a line sized now and each month says both, in its currency", () => {
+  const eur = money("EUR", "cents");
+  assert.equal(
+    sizedAs({ amount_now: 2000, amount_monthly: 150, amount_currency: "EUR" }),
+    `${eur.format(2000)} now and ${eur.format(150)} a month`,
+  );
+});
+
+test("a line sized only now, or only each month, says that one", () => {
+  const usd = money("USD", "cents");
+  assert.equal(sizedAs({ amount_now: 500, amount_currency: "USD" }), `${usd.format(500)} now`);
+  assert.equal(
+    sizedAs({ amount_monthly: 75.5, amount_currency: "USD" }),
+    `${usd.format(75.5)} a month`,
+  );
+});
+
+test("a line whose card carried no amount says none", () => {
+  assert.equal(sizedAs({}), null);
+  assert.equal(sizedAs({ amount_now: null, amount_monthly: null, amount_currency: null }), null);
+  // An amount with no currency is not said as a bare number.
+  assert.equal(sizedAs({ amount_now: 500, amount_currency: null }), null);
 });

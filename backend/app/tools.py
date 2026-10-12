@@ -257,6 +257,10 @@ class Tool:
     # What a confirmed card says it is now, or how to tell it from the card
     # (a tool with several actions: "Ended", "Deleted").
     done: str | Callable[[dict], str] = "Recorded"
+    # An argument that is an amount, and the argument naming its currency: the
+    # card writes it as money in the reader's language, with its code (brief
+    # AQ: a suggestion's amounts), instead of a bare number.
+    currencies: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if (self.run is None) == (self.walk is None):
@@ -4194,11 +4198,56 @@ class SuggestInstrumentArgs(BaseModel):
             "symbol; it is stored as a hint for the reader to check."
         ),
     )
+    amount_now: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Optional: a sum to put in at once, in the base currency, chosen within "
+            "the cash above the reserve that `size_purchase` gave. The card refuses "
+            "one above it."
+        ),
+    )
+    amount_monthly: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Optional: a sum to put in every month, in the base currency, chosen "
+            "within what `size_purchase` gave as left each month after their "
+            "commitments. The card refuses one above it."
+        ),
+    )
+    amount_currency: MaybeText = Field(
+        default=None,
+        description="With an amount: the ISO code of the base currency, as the picture names it.",
+    )
+    amount_assumptions: MaybeText = Field(
+        default=None,
+        description=(
+            "With an amount, required: what you assumed in choosing it, in a sentence "
+            "or two: the reserve's months and whose they are, what each goal keeps, "
+            "why this much of what the records allow. Said on the card and kept on "
+            "the watchlist."
+        ),
+    )
 
     @model_validator(mode="after")
     def _names_one_instrument(self):
         if not self.isin and not (self.symbol or "").strip():
             raise ValueError("Name a fund by its ISIN, or a single share by its symbol.")
+        return self
+
+    @model_validator(mode="after")
+    def _an_amount_says_what_it_assumed(self):
+        sized = self.amount_now is not None or self.amount_monthly is not None
+        if sized and not (self.amount_assumptions or "").strip():
+            raise ValueError(
+                "An amount travels with what it assumed: say it in amount_assumptions."
+            )
+        if not sized and (self.amount_assumptions or "").strip():
+            raise ValueError(
+                "amount_assumptions goes with an amount: give amount_now, amount_monthly "
+                "or both, or leave it out."
+            )
         return self
 
 
@@ -4291,6 +4340,106 @@ _SHARE_NAMED = (
     "the symbol is what names it on your watchlist. A charge and a domicile "
     "are a fund's, and a share has neither."
 )
+
+# The last line of every suggestion card (brief AQ): naming a security, with
+# or without an amount, is said for what it is.
+_NOT_ADVICE = " This is educational information, not personalised regulated advice."
+
+
+def _sized(db: Session, args: SuggestInstrumentArgs) -> tuple[str, str]:
+    """What a card's amounts stand on, in the app's words, to follow "The
+    amounts stand on" on the card and "Stood on" on the watchlist line, and
+    what they add to its fingerprint; ("", "") for a card with no amount. An amount the records
+    do not allow is refused in words, as one they cannot size is.
+
+    The figures are `size_purchase`'s own (`sizing.room`), so the card and the
+    answer that drew it cannot disagree. The bound is the reader's choice
+    (2026-10-12): a sum now within the cash above the reserve, a monthly one
+    within what is left each month once the PACs and the goals' recorded
+    contributions are taken out; what a goal would need is said beside them.
+    The fingerprint takes the figures the records decide and none the market
+    moves, which is why it holds no share of the wealth: "no live price enters
+    a fingerprint". What the sum would weigh in the investments is the
+    answer's to say, from `size_purchase`: the card does not walk the issuers
+    while a confirmation holds the database."""
+    if args.amount_now is None and args.amount_monthly is None:
+        return "", ""
+    found = sizing.room(db)
+    base = found.base
+    named = (args.amount_currency or "").strip().upper()
+    if named != base.upper():
+        raise ValueError(
+            f"The amounts are in the base currency, {base}: name it in amount_currency"
+            + (f", not {named}" if named else "")
+            + "."
+        )
+    held = found.reserve
+    whose = (
+        "your answer in the Profile"
+        if held.from_profile
+        else "the app's default, as your profile does not say"
+    )
+    parts = [f"your records of {found.on}."]
+    if args.amount_now is not None:
+        room = found.cash_above_reserve
+        if room is None:
+            raise ValueError(
+                "No reserve can be sized: no expense is in force, so nothing says what a "
+                "month costs, and no sum put in now can be weighed against one. Say so, "
+                "and that their expenses recorded under Records, Cash flow would size it."
+            )
+        if args.amount_now > room + 0.005:
+            raise ValueError(
+                f"{args.amount_now:.2f} {base} is more than the cash above the reserve, "
+                f"{room:.2f} {base} ({found.cash:.2f} {base} on the accounts, a reserve of "
+                f"{held.amount:.2f} {base}: {held.months:g} months of essential expenses, "
+                f"{whose}). Choose within it, or say there is no room for a sum now."
+            )
+        parts.append(
+            f"{found.cash:.2f} {base} on your accounts, {room:.2f} {base} of it above a reserve "
+            f"of {held.months:g} months of essential expenses ({whose}): "
+            f"{args.amount_now:.2f} {base} now would leave {room - args.amount_now:.2f} {base} "
+            f"above it, and is {_percent(args.amount_now, found.financial_wealth)}% of your "
+            "financial wealth."
+        )
+    if args.amount_monthly is not None:
+        left = found.left_after_commitments
+        if left is None:
+            raise ValueError(
+                "What is left each month cannot be said: no income or no expense is in "
+                "force. No monthly sum can be weighed against it: say so."
+            )
+        if args.amount_monthly > left + 0.005:
+            raise ValueError(
+                f"{args.amount_monthly:.2f} {base} a month is more than what is left each "
+                f"month once the PACs and the goals' contributions are taken out, "
+                f"{left:.2f} {base}. Choose within it."
+            )
+        parts.append(
+            f"{left:.2f} {base} is left each month once the PACs and the goals' recorded "
+            f"contributions are taken out: {args.amount_monthly:.2f} {base} a month is "
+            f"{_percent(args.amount_monthly, left)}% of it."
+        )
+    for goal in found.goals:
+        if goal.monthly_need is not None:
+            short = (
+                f", {goal.shortfall:.2f} {goal.currency} short" if goal.shortfall else ""
+            )
+            parts.append(
+                f'The goal "{goal.name}" needs {goal.monthly_need:.2f} {goal.currency} a month '
+                f"to {goal.by} with no growth, and {goal.recorded_monthly:.2f} {goal.currency} "
+                f"a month is recorded for it{short}."
+            )
+    if found.left_if_goals_met is not None and any(g.shortfall for g in found.goals):
+        parts.append(
+            f"Were every goal given its need, {found.left_if_goals_met:.2f} {base} would "
+            "be left each month."
+        )
+    fingerprint = (
+        f"{base}|{found.cash_above_reserve}|{held.months}|{held.from_profile}|"
+        f"{found.left_after_commitments}"
+    )
+    return " ".join(parts), fingerprint
 
 
 def _listed_share(symbol: str | None) -> dict:
@@ -4387,6 +4536,7 @@ def _propose_suggestion(db: Session, args: SuggestInstrumentArgs) -> Proposal:
             f"{other} share class ({twin.isin}); this card is for the one named "
             "above."
         )
+    figures, sized = _sized(db, args)
     return Proposal(
         title=(
             f"watch: {row.name}, {row.isin}"
@@ -4394,8 +4544,11 @@ def _propose_suggestion(db: Session, args: SuggestInstrumentArgs) -> Proposal:
         ),
         fingerprint=(
             f"{row.isin}|{row.name}|{row.ter}|{row.distribution_policy}|{row.domicile}"
+            + (f"|{sized}" if sized else "")
         ),
-        consequence=consequence,
+        consequence=consequence
+        + (f" The amounts stand on {figures}" if figures else "")
+        + _NOT_ADVICE,
         verb="Add to watchlist",
     )
 
@@ -4416,13 +4569,25 @@ def _propose_share(db: Session, args: SuggestInstrumentArgs) -> Proposal:
             f"{watched.added_at}, because: {watched.reason}"
         )
     where = f" · {share['exchange']}" if share.get("exchange") else ""
+    # The listing's currency as Yahoo gives it (brief AQ), never inferred from
+    # the exchange; not in the fingerprint, since a silence about it is a
+    # blip and not the listing having changed.
+    quoted = _listing_currency(share["symbol"])
+    figures, sized = _sized(db, args)
     return Proposal(
-        title=f"watch: {share['name']}, {share['symbol']} · share{where}",
+        title=(
+            f"watch: {share['name']}, {share['symbol']} · share{where} · "
+            + (f"quoted in {quoted}" if quoted else "currency not given by Yahoo")
+        ),
         fingerprint=(
             f"{share['symbol']}|{share['name']}|{share.get('exchange')}|"
             f"{share.get('quote_type')}"
+            + (f"|{sized}" if sized else "")
         ),
-        consequence=_WATCH_CONSEQUENCE + _SHARE_NAMED,
+        consequence=_WATCH_CONSEQUENCE
+        + _SHARE_NAMED
+        + (f" The amounts stand on {figures}" if figures else "")
+        + _NOT_ADVICE,
         verb="Add to watchlist",
     )
 
@@ -4442,6 +4607,11 @@ def _suggest_instrument(db: Session, args: SuggestInstrumentArgs) -> dict:
     else:
         share = _listed_share(args.symbol)
         isin, symbol, name = None, share["symbol"], share["name"]
+    # The amount the card carried, kept with what it stood on (brief AQ): the
+    # figures are read again here, from the records the confirmation has just
+    # checked against the card's fingerprint, so they are the card's.
+    figures, _ = _sized(db, args)
+    sized = bool(figures)
     item = crud.create_watchlist_item(
         db,
         schemas.WatchlistItemCreate(
@@ -4451,6 +4621,11 @@ def _suggest_instrument(db: Session, args: SuggestInstrumentArgs) -> dict:
             reason=args.reason.strip(),
             based_on=args.based_on.strip(),
             unknowns=args.unknowns.strip(),
+            amount_now=args.amount_now,
+            amount_monthly=args.amount_monthly,
+            amount_currency=(args.amount_currency or "").strip().upper() if sized else None,
+            amount_assumptions=(args.amount_assumptions or "").strip() if sized else None,
+            amount_figures=figures or None,
         ),
     )
     return {
@@ -4459,6 +4634,9 @@ def _suggest_instrument(db: Session, args: SuggestInstrumentArgs) -> dict:
         "symbol": item.symbol,
         "name": item.name,
         "added_at": item.added_at,
+        "amount_now": item.amount_now,
+        "amount_monthly": item.amount_monthly,
+        "amount_currency": item.amount_currency,
     }
 
 
@@ -4468,13 +4646,21 @@ _SUGGESTION_LABELS = {
     "reason": "Why this one",
     "based_on": "Rests on",
     "unknowns": "Not known",
+    "amount_now": "Now",
+    "amount_monthly": "Each month",
+    # Said with the amounts it is the currency of (`Tool.currencies`).
+    "amount_currency": "",
+    "amount_assumptions": "Assumes",
 }
 
 
 def _suggestion_receipt(result: dict) -> list[tuple]:
+    currency = result.get("amount_currency")
     return [
         ("On your watchlist since", result.get("added_at"), "date"),
         ("Ticker", result.get("symbol"), "text"),
+        ("Now", result.get("amount_now"), "amount", currency),
+        ("Each month", result.get("amount_monthly"), "amount", currency),
     ]
 
 
@@ -4992,7 +5178,11 @@ REGISTRY: dict[str, Tool] = {
                 "catalogue lacks, not a coin, not a single bond. Three things "
                 "travel with it and all three are required: why this one, what "
                 "they DECLARED that it rests on, and what you do not know that "
-                "would change it. Use it when the reader ASKS YOU TO RECOMMEND "
+                "would change it. When they asked how much, it carries the "
+                "amount too: a sum now, a monthly sum or both, in the base "
+                "currency, chosen within what `size_purchase` computed, with what "
+                "you assumed; the card refuses an amount above what the records "
+                "allow. Use it when the reader ASKS YOU TO RECOMMEND "
                 "SOMETHING ('mi consigli un ETF per le small cap', 'what should "
                 "I buy for X', 'what would you look at' are the same request "
                 "and this is the answer to it), or to fill a gap you can point "
@@ -5008,6 +5198,7 @@ REGISTRY: dict[str, Tool] = {
             labels=_SUGGESTION_LABELS,
             receipt=_suggestion_receipt,
             done="Added to your watchlist",
+            currencies={"amount_now": "amount_currency", "amount_monthly": "amount_currency"},
         ),
         Tool(
             name="run_analysis",
@@ -5205,6 +5396,7 @@ def present(card: dict) -> dict:
     tool = REGISTRY.get(card.get("tool") or "")
     arguments = card.get("arguments") or {}
     labels = tool.labels if tool is not None else {}
+    currencies = tool.currencies if tool is not None else {}
     order = list(tool.arguments.model_fields) if tool is not None else []
     order += [name for name in arguments if name not in order]
     fields = []
@@ -5212,7 +5404,12 @@ def present(card: dict) -> dict:
         if name not in arguments:
             continue
         label = labels.get(name, _humanized(name))
-        line = _card_field(label, arguments[name]) if label else None
+        if not label:
+            continue
+        if name in currencies:
+            line = _card_field(label, arguments[name], "amount", arguments.get(currencies[name]))
+        else:
+            line = _card_field(label, arguments[name])
         if line is not None:
             fields.append(line)
     receipt = []

@@ -7,12 +7,39 @@
    and the sentences differ because the symbol means two things: a hint to
    check on a fund's line, the identity on a share's.
 
-   No runtime imports, so `npm test` reaches it. */
+   Since brief AQ a line can also keep the amount its card was sized with: a
+   sum now, a sum each month or both, in the currency the app computed them
+   in, with what the chat assumed and what the figures were that day.
+
+   No runtime imports but `money.ts`, itself pure, so `npm test` reaches it. */
+
+import { money } from "./money.ts";
 
 /** The two fields that say what a line names. */
 export interface WatchedInstrument {
   isin?: string | null;
   symbol?: string | null;
+}
+
+/** The fields that say what a line's card was sized with, when it was. */
+export interface SizedLine {
+  amount_now?: number | null;
+  amount_monthly?: number | null;
+  amount_currency?: string | null;
+}
+
+/** The amount a line's card carried, in the reader's language ("€2,000.00
+    now and €150.00 a month"), or null for a line whose card carried none. */
+export function sizedAs(item: SizedLine): string | null {
+  const currency = item.amount_currency;
+  const parts: string[] = [];
+  if (currency && item.amount_now != null) {
+    parts.push(`${money(currency, "cents").format(item.amount_now)} now`);
+  }
+  if (currency && item.amount_monthly != null) {
+    parts.push(`${money(currency, "cents").format(item.amount_monthly)} a month`);
+  }
+  return parts.length ? parts.join(" and ") : null;
 }
 
 /** Whether the line names a single share rather than a fund. */

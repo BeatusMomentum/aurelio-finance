@@ -5108,6 +5108,31 @@ export interface components {
             /** Added At */
             added_at: string;
             /**
+             * Amount Assumptions
+             * @description What the amounts assumed, in the chat's words
+             */
+            amount_assumptions: string | null;
+            /**
+             * Amount Currency
+             * @description The currency of the amounts: the base on the day they were sized
+             */
+            amount_currency: string | null;
+            /**
+             * Amount Figures
+             * @description What the amounts stood on, in the app's words, with the day they were computed
+             */
+            amount_figures: string | null;
+            /**
+             * Amount Monthly
+             * @description A sum to put in each month, in amount_currency
+             */
+            amount_monthly: number | null;
+            /**
+             * Amount Now
+             * @description A sum to put in at once, in amount_currency
+             */
+            amount_now: number | null;
+            /**
              * Based On
              * @description What the reader declared that this rests on
              */
