@@ -29,7 +29,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
-from app import analytics, catalogue, crud, dated, fx, planning, schemas
+from app import analytics, catalogue, crud, dated, fx, planning, schemas, sizing
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "anthropic/claude-opus-5.5"
@@ -782,7 +782,8 @@ def build_context(db: Session) -> str:
     # the ones in force counted, the ones still to start and the ones that
     # have ended listed apart. A run-rate and two dateless lists stood here,
     # and they counted and printed a salary starting next month as running.
-    lines.extend(_render_flows_in_force(flows))
+    # With, for the chat only, what the PACs and the goals take each month.
+    lines.extend(_render_flows_in_force(flows, *sizing.commitments(db, flows["on"])))
 
     lines.append("## Investment positions (latest situation + recorded buys/sells)")
     if not portfolio["rows"]:
@@ -1104,7 +1105,46 @@ def _flow_line(flow: dict, *, scheduled: bool) -> str:
     return f"{text}{where}{when}{until}"
 
 
-def _render_flows_in_force(flows: dict) -> list[str]:
+def _render_commitments(
+    flows: dict, committed: tuple[sizing.Commitment, ...], later: tuple[sizing.Commitment, ...]
+) -> list[str]:
+    """What the reader already puts away every month beside the expenses, and
+    what is left after it (`sizing`), for the chat's picture.
+
+    The reader's third test round (2026-10-12): a reply called a sum small
+    beside the monthly surplus and forgot that the PAC takes its share of it
+    first. The surplus line above is the flows' alone, so this one says what
+    the PACs and the goals' recorded contributions take, and what is left once
+    they have. Not in the analyst's picture: a goal is the person's, and the
+    analyst is not told who the person is."""
+
+    def named(c: sizing.Commitment) -> str:
+        what = "PAC" if c.kind == "pac" else "goal"
+        whose = ", its recorded contribution" if c.kind == "goal" else ""
+        return f'the {what} "{c.name}" {c.monthly:.2f} ({c.recorded}{whose})'
+
+    lines = []
+    if committed:
+        left = sizing.left_after(flows, committed)
+        lines.append(
+            "- Already committed each month beside the expenses: "
+            + "; ".join(named(c) for c in committed)
+            + "."
+            + (f" Left each month after them: {left:.2f}" if left is not None else "")
+        )
+    if later:
+        lines.append(
+            "- Starting after today, so NOT taken out above: "
+            + "; ".join(f"{named(c)} from {c.starts}" for c in later)
+        )
+    return lines
+
+
+def _render_flows_in_force(
+    flows: dict,
+    committed: tuple[sizing.Commitment, ...] = (),
+    later: tuple[sizing.Commitment, ...] = (),
+) -> list[str]:
     """The income and expenses running today, as `compute_flows_in_force`
     counts them: the totals first, then each flow as the chat used to list
     it, with its dates, then the ones that have not started and the ones that
@@ -1113,7 +1153,8 @@ def _render_flows_in_force(flows: dict) -> list[str]:
     One renderer for the chat and the analyst (brief AI). The chat had a
     run-rate of its own and two lists with no dates, so a salary starting
     next month was counted and printed as running, and an ended expense as
-    still paid."""
+    still paid. The chat's picture also says what is committed each month
+    beside the expenses, and what is left after it (`_render_commitments`)."""
 
     def split(total: float, **parts: float) -> str:
         """" (active 1.00, passive 2.00)", with what no part claims named."""
@@ -1148,6 +1189,7 @@ def _render_flows_in_force(flows: dict) -> list[str]:
         if not missing
         else f"- What is left each month cannot be said: no {' and no '.join(missing)} "
         "is in force today.",
+        *_render_commitments(flows, committed, later),
     ]
     undated = flows["undated"]
     if undated == 1:

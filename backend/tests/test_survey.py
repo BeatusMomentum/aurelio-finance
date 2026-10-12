@@ -1,7 +1,7 @@
 """The questionnaire has two write paths now, and they are not interchangeable.
 
 `replace_survey_responses` is the form's: it deletes every answer and reinserts
-what it was handed, which is correct for a caller that renders all 27 questions
+what it was handed, which is correct for a caller that renders all its questions
 and posts them all back. `upsert_survey_response` is the one the chat needs,
 because a conversation knows about ONE answer and going through the other door
 would erase the profile in order to fill in a line of it.

@@ -206,6 +206,16 @@ QUESTIONS: tuple[schemas.SurveyQuestion, ...] = (
         "At what age would you like to retire or be financially independent?",
     ),
     # Risk and values.
+    # The reserve an amount for an investment is sized above (brief AQ,
+    # `sizing`): the months of essential expenses kept aside. Unanswered, the
+    # app's default holds, and is said as the app's, never as theirs.
+    _asked(
+        "reserve_months",
+        "Risk & values",
+        "number",
+        "How many months of essential expenses do you want to keep aside as a reserve, "
+        "whatever you invest?",
+    ),
     _asked(
         "risk_tolerance",
         "Risk & values",

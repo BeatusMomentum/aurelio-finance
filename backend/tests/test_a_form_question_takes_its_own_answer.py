@@ -66,7 +66,8 @@ def test_the_form_draws_itself_from_the_backends_list(client):
     served = client.get("/api/survey/questions").json()
 
     assert [q["key"] for q in served] == [q.key for q in questionnaire.QUESTIONS]
-    assert len(served) == 27
+    # 27 until brief AQ added the reserve's months (2026-10-12).
+    assert len(served) == 28
     big = next(q for q in served if q["key"] == "big_purchase")
     assert big == {
         "key": "big_purchase",
