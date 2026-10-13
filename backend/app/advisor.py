@@ -1070,13 +1070,33 @@ def _render_cash_beside(positions: list[dict], summary: dict) -> list[str]:
     """The cash register for the analyst: the chat's own lines, then the
     total, with the accounts it leaves out named. An account with no anchor
     has no cash the app knows of, which is not the same as none: the total
-    counts nothing for it, and says so."""
+    counts nothing for it, and says so.
+
+    And an account below zero is said to be netted in the total already. Brief
+    AR's P0 (2026-10-12): the revision and the synthesis called the cash one
+    could use "a little lower than the total" because one account stood at
+    -250.00, though the total had already taken those 250 off; covering them
+    from another account moves cash between the person's accounts and leaves
+    the total as it is. Brief AQ's P1 bis saw the same reading in the chat."""
     lines = ["## Cash register (live, projected to today)", *_render_cash(positions)]
     unset = [p["institution_name"] for p in positions if p["anchor_date"] is None]
     total = f"- TOTAL cash on the accounts: {summary['cash_total']:.2f}" + _not_counting(
         unset, "no cash anchor is set there, so that cash is not known"
     )
-    return [*lines, total, ""]
+    below = [
+        p["institution_name"]
+        for p in positions
+        if p["anchor_date"] is not None and p["projected"] < -0.005
+    ]
+    netted = []
+    if below:
+        netted.append(
+            f"- Netted in the total above: {_and(below)}, below zero. Covering "
+            f"{'it' if len(below) == 1 else 'them'} from another of these accounts moves cash "
+            "between them and leaves the total, and every share and month of cover worked "
+            "out from it, as they are."
+        )
+    return [*lines, total, *netted, ""]
 
 
 def _flow_line(flow: dict, *, scheduled: bool) -> str:
