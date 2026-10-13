@@ -1072,6 +1072,130 @@ def weigh_purchase(db: Session, purchase: Purchase) -> dict:
     }
 
 
+# --- A change considered, for the analysis (brief AR) ----------------------------
+
+
+@dataclass(frozen=True)
+class Sale:
+    """A part of a held position sold, considered and not made: the position by
+    the symbol or the ISIN it is held under, and the sum that would come out of
+    it, in the base currency."""
+
+    key: str
+    value: float
+
+
+def _held_under(p, key: str) -> bool:
+    """Whether a held position is the one `key` names: by the key the
+    look-through fetches it by, its symbol or its ISIN."""
+    wanted = key.strip().upper()
+    return wanted in {
+        (_lookup_key(p) or "").upper(), (p.symbol or "").upper(), (p.isin or "").strip().upper(),
+    } - {""}
+
+
+def weigh_change(db: Session, purchase: Purchase | None = None, sale: Sale | None = None) -> dict:
+    """What the look-through would read after a change, against what it reads
+    now: a purchase beside what is held (as `weigh_purchase` weighs one), a
+    part of a held position sold, or both, a switch. Its weights, the
+    countries, sectors, currencies and companies that move most, and how much
+    of the investments the look-through sees inside, before and after.
+
+    The analysis's tool (brief AR): what a change would weigh, read off the
+    records and the funds' holdings and nothing else, so never the room an
+    amount stands on (`sizing`, which reads the profile and the goals). A sale
+    larger than the position, or of a position nothing is held under, is
+    refused in words (LookupError, ValueError). Every percentage is a share of
+    the investments, which a sale shrinks and a purchase grows."""
+    if purchase is None and sale is None:
+        raise ValueError("A change is a purchase, a sale or both: neither was given.")
+    conv = fx.Converter(db)
+    fetched = [(p, *_composition_of(db, p, False)) for p in _held(db, conv)]
+    before = _aggregate(db, conv, fetched, cut=None)
+    after_held = fetched
+    sold = None
+    if sale is not None:
+        under = [i for i, (p, _, _) in enumerate(fetched) if _held_under(p, sale.key)]
+        if not under:
+            raise LookupError(
+                f"No position is held under {sale.key!r}: name one by the symbol or the ISIN "
+                "it is held under."
+            )
+        # One fund held in two accounts is two positions: the larger is sold
+        # from, and the result says which.
+        place = max(under, key=lambda i: fetched[i][0].current_value)
+        p, comp, why = fetched[place]
+        if sale.value > p.current_value + 0.005:
+            raise ValueError(
+                f"{sale.key} is worth {p.current_value:.2f} {conv.base}; a sale of "
+                f"{sale.value:.2f} is more than it holds."
+            )
+        left = p.current_value - sale.value
+        kept = _Considered(
+            symbol=p.symbol, isin=p.isin, asset_name=p.asset_name, asset_class=p.asset_class,
+            current_value=left, institution_id=p.institution_id,
+        )
+        after_held = fetched[:place] + ([(kept, comp, why)] if left > 0.005 else []) + fetched[place + 1:]
+        sold = {
+            "position": _position_label(p, {i.id: i.name for i in crud.get_institutions(db)}),
+            "amount": round(sale.value, 2),
+            "its_weight_before_pct": round(
+                p.current_value / (sum(q.current_value for q, _, _ in fetched) or 1.0) * 100, 2
+            ),
+        }
+    considered = None
+    bought = None
+    if purchase is not None:
+        position = _Considered(
+            symbol=purchase.symbol, isin=purchase.isin, asset_name=purchase.name,
+            asset_class=None, current_value=purchase.value,
+        )
+        # More of a fund already held is weighed with the composition its
+        # position was just read with: the cache keeps it under the position's
+        # key (its ticker), and a purchase named by its ISIN would otherwise
+        # ask every source again for a file already in hand.
+        same = [
+            (comp, why)
+            for p, comp, why in fetched
+            if comp is not None
+            and (
+                (purchase.isin and (p.isin or "").strip().upper() == purchase.isin.strip().upper())
+                or (purchase.symbol and _lookup_key(p) == purchase.symbol)
+            )
+        ]
+        comp, why_not = same[0] if same else _composition_of(db, position, False)
+        considered = (position, comp, why_not)
+        inside = comp is not None and bool(comp["countries"] or comp["sectors"])
+        bought = {
+            "amount": round(purchase.value, 2),
+            "looked_inside": inside,
+            "why_not": None if inside else (why_not or "no source gives its countries or sectors"),
+            "source": comp["source"] if inside else None,
+        }
+    after = _aggregate(db, conv, after_held, considered, cut=None)
+    worth_before = sum(p.current_value for p, _, _ in fetched)
+    worth_after = sum(p.current_value for p, _, _ in after_held) + (purchase.value if purchase else 0.0)
+    if bought is not None:
+        bought["its_weight_after_pct"] = round(purchase.value / (worth_after or 1.0) * 100, 2)
+    if sold is not None:
+        sold["its_weight_after_pct"] = round(
+            max(fetched[place][0].current_value - sale.value, 0.0) / (worth_after or 1.0) * 100, 2
+        )
+    return {
+        "currency": conv.base,
+        "investments_before": round(worth_before, 2),
+        "investments_after": round(worth_after, 2),
+        "bought": bought,
+        "sold": sold,
+        "moves": {
+            axis: _moves(before[axis], after[axis])
+            for axis in ("countries", "sectors", "currencies", "companies")
+        },
+        "coverage_before_pct": before["coverage_pct"],
+        "coverage_after_pct": after["coverage_pct"],
+    }
+
+
 def _errors_in(row: models.CompositionCache) -> list[str]:
     """The refusals stored on a cache row, or nothing if the blob is unreadable."""
     try:

@@ -501,6 +501,125 @@ def facts(db: Session, isins: Iterable[str]) -> dict:
     return {"rows": _count(db), "fetched_at": _get_meta(db, META_FETCHED_AT), "funds": funds}
 
 
+# --- What the registry holds on a fund's index (brief AR) -------------------------
+#
+# The analysis judged a fund's ongoing charge "efficient" against nothing (brief
+# AR's P0, 2026-10-12: 0.20% a year, where this registry held funds on the same
+# index from 0.05%). It asks here what the registry holds on a fund's index.
+#
+# The registry stores no index, and justETF's list carries none as the library
+# downloads it (4,617 funds and 42 columns on 2026-10-12, none of them an
+# index; a fund's own profile page names its index, but only its own). Fund
+# names do: the words before "UCITS" end with the index ("... Core MSCI World
+# UCITS ETF", "... MSCI World UCITS ETF 1C"). So the match is by those words,
+# and the answer says so.
+
+# Words a name uses that tell its fund apart from the index's other funds
+# without changing the index: how it replicates, which series it belongs to,
+# how its currency is hedged. The registry's own columns say them.
+_CURRENCY_WORDS = frozenset(
+    {"usd", "eur", "gbp", "chf", "jpy", "sek", "nok", "dkk", "cad", "aud", "hkd", "sgd", "pln",
+     "czk", "huf", "cny", "cnh"}
+)
+_SET_ASIDE = frozenset({"swap", "ii", "iii", "iv", "physical", "synthetic", "hedged", "unhedged"})
+_HEDGED_CLASS = re.compile(r"^h(" + "|".join(sorted(_CURRENCY_WORDS)) + r")$", re.IGNORECASE)
+
+# The words after a brand that are still the brand: "iShares Core", "Amundi
+# Prime", "iShares Edge".
+_BRAND_TAIL = frozenset({"core", "prime", "edge"})
+
+# Words that name another exposure when they stand before an index's name:
+# "ESG Global Aggregate Bond" is a screened index, not the Global Aggregate.
+# The ones after it need no list: a name that ends otherwise is another index.
+_ANOTHER_EXPOSURE = frozenset(
+    {"esg", "sri", "screened", "climate", "pab", "paris", "aligned", "sustainable", "green",
+     "social", "socially", "responsible", "islamic", "shariah", "leveraged", "short", "inverse",
+     "daily", "equal", "weight", "weighted", "enhanced", "select", "selection", "transition",
+     "carbon", "momentum", "value", "quality", "dividend", "factor", "minimum", "volatility",
+     "multi", "smart", "growth", "covered", "buffer", "defensive", "ctb", "high", "yield"}
+)
+
+
+def _index_words(name: str) -> list[str]:
+    """The words a fund's name gives its index by, as written: those before
+    "UCITS", its replication, series and hedging words set aside."""
+    head = re.split(r"\bUCITS\b", name or "", maxsplit=1, flags=re.IGNORECASE)[0]
+    raw = re.findall(r"[\w&+.-]+", head)
+    kept = []
+    for i, word in enumerate(raw):
+        low = word.lower()
+        after = raw[i + 1].lower() if i + 1 < len(raw) else ""
+        if low in _SET_ASIDE or _HEDGED_CLASS.match(word):
+            continue
+        if low in _CURRENCY_WORDS and after in ("hedged", "unhedged"):
+            continue
+        kept.append(word)
+    return kept
+
+
+def same_index(db: Session, isin: str) -> dict:
+    """What the registry holds on the index a fund's name gives: the fund as
+    the registry has it, the words its index was matched by, and every other
+    fund whose name ends with the same words (the replication, series and
+    hedging words set aside), none of them preceded by a word that names
+    another exposure ("ESG", "Equal Weight").
+
+    The index is found as the longest run of the fund's last words that a fund
+    of another brand ends its name with too, the brand being the name's first
+    word and any of "Core", "Prime", "Edge" after it: "iShares Core MSCI World"
+    gives "MSCI World", shared with "Xtrackers MSCI World". A fund no other
+    brand shares words with is matched by all of its own, its twins only.
+
+    Read only. Raises LookupError for an ISIN the registry does not hold."""
+    wanted = (isin or "").strip().upper()
+    rows = [
+        dict(r)
+        for r in db.execute(
+            text(
+                "SELECT isin, name, ter, replication, distribution_policy, hedged, size_meur"
+                " FROM instruments"
+            )
+        ).mappings()
+    ]
+    fund = next((r for r in rows if r["isin"] == wanted), None)
+    if fund is None:
+        raise LookupError(
+            f"The fund catalogue does not hold {wanted or 'that ISIN'}"
+            + ("" if rows else ": it has not been downloaded yet")
+            + "."
+        )
+    words = {r["isin"]: [w.lower() for w in _index_words(r["name"])] for r in rows}
+    own = words[wanted]
+    brand, rest = (own[0], own[1:]) if own else ("", [])
+    while rest and rest[0] in _BRAND_TAIL:
+        rest = rest[1:]
+    index = rest
+    for size in range(len(rest), 0, -1):
+        tail = rest[-size:]
+        if any(
+            w and w[0] != brand and w[-size:] == tail
+            for key, w in words.items()
+            if key != wanted and len(w) >= size
+        ):
+            index = tail
+            break
+
+    def on_it(w: list[str]) -> bool:
+        if not index or len(w) < len(index) or w[len(w) - len(index):] != index:
+            return False
+        return not (set(w[: len(w) - len(index)]) & _ANOTHER_EXPOSURE)
+
+    others = [r for r in rows if r["isin"] != wanted and on_it(words[r["isin"]])]
+    shown = _index_words(fund["name"])
+    return {
+        "fund": fund,
+        "index_words": " ".join(shown[len(shown) - len(index):]) if index else None,
+        "others": others,
+        "rows": len(rows),
+        "fetched_at": _get_meta(db, META_FETCHED_AT),
+    }
+
+
 _TOKEN = re.compile(r"[\w]+", re.UNICODE)
 
 
