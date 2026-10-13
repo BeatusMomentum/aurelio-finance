@@ -11,8 +11,9 @@ nav_order: 2
 Aurelio's AI portfolio review gets a second opinion out of what each role is allowed to see:
 an analyst judges the numbers without knowing whose they are, a confidant who knows the
 person challenges the findings without seeing the numbers, and the final answer keeps any
-disagreement instead of averaging it away.** A review costs $0.33 to $0.51 on the default
-model and runs on your own records, inside Aurelio, an open-source personal finance app.
+disagreement instead of averaging it away.** A review cost $0.64 on the default model when
+it was measured in October 2026, and runs on your own records, inside Aurelio, an
+open-source personal finance app.
 
 ## Why is one model not enough?
 
@@ -25,10 +26,16 @@ built on what they are not shown.
 
 | Step | Sees | Does not see | Its job |
 |---|---|---|---|
-| **Analyst** | the investments and everything else you own and owe: cash, the income and expenses in force, real assets, debts | who you are: no profile, no goals | judge the portfolio on the numbers alone |
+| **Analyst** | the investments and everything else you own and owe: cash, the income and expenses in force, real assets, debts, and the country you pay tax in with the rates you declared | who you are: no profile answers, no goals | judge the portfolio on the numbers alone, checking what it can |
 | **Confidant** | you (profile and goals) and the analyst's findings | the figures of your records | argue about fit, temperament and framing, and say whether it is challenging something that matters |
 | **Revision** (only when the challenge is contested) | the figures again, its own analysis and the challenge | who you are, beyond what the challenge says | answer it point by point, marking each point REVISE or HOLD; silently dropping one is not allowed |
 | **Synthesis** | the analysis, the challenge, the revision if there was one, and how you describe yourself | the raw figures, beyond what the analysis quotes | write the one answer you read, leading with what to do and why, with any remaining disagreement left in |
+
+The analyst and its revision can look things up before they answer: the look-through of your
+funds, what the fund catalogue holds on a fund's index and at which costs, what an instrument
+is and its latest close, what a purchase or a sale would change, and, on Anthropic's models,
+the web. None of these reads your profile answers or your goals, and a test in the code plants
+markers there to check that none of them reaches the analyst.
 
 The prompts ask for friction on purpose: two polite models converge into agreement that
 carries no information.
@@ -38,11 +45,13 @@ carries no information.
 The analyst, the confidant and the synthesis always run. The revision runs only when the
 confidant actually disagrees, which its own instructions make it say. When the disagreement is
 real, the loop goes round again: the confidant reads the revision and says whether its
-challenge still stands, and the analyst answers once more. A run is three calls when there is
-nothing to argue about and up to six when there is.
+challenge still stands, and the analyst answers once more. A run is three steps when there is
+nothing to argue about and up to six when there is. A step of the analyst's is one request to
+the model, or up to four, with up to three web searches, when it looks things up.
 
-In the measurements of October 2026 a review cost $0.33 to $0.51. What skipping the revision
-saves is mostly your time: a minute of waiting matters more than the cents.
+Measured on 12 October 2026, a review cost $0.64: the analyst looked up ten things in three
+rounds, one of them a web search, before it wrote. What skipping the revision saves is mostly
+your time: a minute of waiting matters more than the cents.
 
 ## How do you run one?
 
@@ -92,5 +101,6 @@ educational information, not regulated financial advice.
 ## Sources
 
 - The roles, their prompts and the variable depth: [chain.py](https://github.com/LosaLosSantos/aurelio-finance/blob/main/backend/app/chain.py).
+- What the analyst can look up: [analyst_tools.py](https://github.com/LosaLosSantos/aurelio-finance/blob/main/backend/app/analyst_tools.py).
 - [Ask AI whether a stock is worth buying](ask-ai-whether-a-stock-is-worth-buying.md)
 - [How much does an AI financial advisor cost?](how-much-does-an-ai-financial-advisor-cost.md)

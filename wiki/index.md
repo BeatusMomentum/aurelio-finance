@@ -28,7 +28,7 @@ optional, and it goes through [OpenRouter](https://openrouter.ai) with your own 
 - **The AI:** optional; any model OpenRouter serves, with your own key; Claude Opus 5.5 by
   default.
 - **What it costs:** the app is free (MIT license); a question to the AI costs about $0.01 to
-  $0.24 on the default model, a full analysis $0.33 to $0.51.
+  $0.24 on the default model, a full analysis $0.64.
 - **Your records:** one SQLite file on your machine.
 - **Code:** [github.com/LosaLosSantos/aurelio-finance](https://github.com/LosaLosSantos/aurelio-finance).
 

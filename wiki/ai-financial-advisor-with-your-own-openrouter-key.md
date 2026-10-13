@@ -34,7 +34,7 @@ It is the simplest protection there is: whatever happens, the key stops at that 
 
 Leave it some room, though. Before each request OpenRouter holds the most that request could
 cost: its input plus the longest answer the app allows, which is 8,192 tokens for a round of
-the chat and 16,384 for a step of the analysis (about $0.16 and $0.33 of output on the default
+the chat and 16,384 for a request of the analysis (about $0.16 and $0.33 of output on the default
 model). A key with less than that left is refused, even when the real answer would have cost
 two cents.
 

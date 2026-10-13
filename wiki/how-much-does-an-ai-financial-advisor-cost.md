@@ -1,6 +1,6 @@
 ---
 title: "How much does an AI financial advisor cost?"
-description: "Measured on Aurelio in October 2026 on the default model: about two cents for a follow-up question, eleven to twelve cents for a first question, 33 to 51 cents for a full portfolio analysis, paid to OpenRouter with your own key."
+description: "Measured on Aurelio in October 2026 on the default model: about two cents for a follow-up question, eleven to twelve cents for a first question, 64 cents for a full portfolio analysis, paid to OpenRouter with your own key."
 parent: "Guides"
 nav_order: 3
 ---
@@ -9,7 +9,7 @@ nav_order: 3
 
 **An AI financial advisor costs a few cents per question when you pay for the model yourself:
 on Aurelio's default model, a follow-up question costs about $0.02, a first question $0.11 to
-$0.12, and a full portfolio analysis $0.33 to $0.51.** These are what OpenRouter charged for
+$0.12, and a full portfolio analysis $0.64.** These are what OpenRouter charged for
 real requests made through the app in October 2026, on a test database, with Claude Opus 5.5
 at $4 per million input tokens and $20 per million output tokens. You pay OpenRouter with your
 own key; there is no subscription on top, and the app itself is free and open source.
@@ -24,12 +24,12 @@ own key; there is no subscription on top, and the app itself is free and open so
 | Confirming a card, with the reply after it | $0.014 to $0.049 |
 | Whether something is worth buying, and how much, in two or three rounds, its searches included | $0.067 to $0.24 |
 | Each web search, on top of the round that asked for it | $0.0073 to $0.0075 |
-| An analysis | $0.33 to $0.51 |
+| An analysis, its lookups included | $0.64 |
 
 A card is a change the chat proposes to your records, which you confirm or reject; a round is
 one call to the model, and a question that needs a tool (a search, a calculation on your
-records) takes more than one. The chat's rows were measured on 11 and 12 October 2026, the web
-search on 9 October.
+records) takes more than one. The chat's rows were measured on 11 and 12 October 2026, the
+analysis on 12 October, the web search on 9 October.
 
 ## Why does the first question cost more than the next?
 
@@ -60,16 +60,19 @@ cache.
 
 ## Why does an analysis cost more?
 
-The [AI portfolio review](ai-portfolio-review.md) is several calls, each writing a full
+The [AI portfolio review](ai-portfolio-review.md) is several steps, each writing a full
 document: an analyst, a confidant who challenges it, the analyst's answer when the challenge
-is contested, and a synthesis. That is three calls when there is nothing to argue about and up
-to six when there is. Before it starts, the card that proposes it tells you what the last run
-cost, so you confirm a figure rather than a guess.
+is contested, and a synthesis. That is three steps when there is nothing to argue about and up
+to six when there is. The analyst's steps may look things up first, in up to four requests and
+three web searches a step, so what a run costs moves with what they look up: in the run
+measured on 12 October 2026 the analyst looked up ten things in three rounds, and the run cost
+$0.64. Before it starts, the card that proposes it tells you what the last run cost, so you
+confirm a figure rather than a guess.
 
 ## What does a month cost?
 
 An illustration from the measured figures, not a measurement: five first questions at $0.12,
-twenty follow-ups at $0.021 and two analyses at $0.51 come to $0.60 + $0.42 + $1.02 = $2.04 for
+twenty follow-ups at $0.021 and two analyses at $0.64 come to $0.60 + $0.42 + $1.28 = $2.30 for
 the month, on the default model.
 
 ## How do you keep it bounded?
