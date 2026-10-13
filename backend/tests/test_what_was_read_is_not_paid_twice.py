@@ -33,6 +33,8 @@ import pytest
 from app import advisor, chat, tools
 
 REAL_CALL_LLM, REAL_STREAM_LLM = advisor.call_llm, advisor.stream_llm
+# The analyst's steps ask in rounds since brief AR (`advisor.call_round`).
+REAL_CALL_ROUND = advisor.call_round
 
 OPUS = "anthropic/claude-opus-5.5"
 OTHERS = ["qwen/qwen3.8-max-0902", "openai/gpt-6.1-sol-pro", "moonshotai/kimi-k3"]
@@ -124,6 +126,7 @@ def openrouter(monkeypatch):
         )
 
     monkeypatch.setattr(advisor, "call_llm", REAL_CALL_LLM)
+    monkeypatch.setattr(advisor, "call_round", REAL_CALL_ROUND)
     monkeypatch.setattr(advisor, "stream_llm", REAL_STREAM_LLM)
     monkeypatch.setattr(advisor, "_client", client)
     Fake.script, Fake.asked = [], []

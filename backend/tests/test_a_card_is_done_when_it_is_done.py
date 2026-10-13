@@ -34,6 +34,8 @@ import pytest
 from app import advisor, catalogue, chat, tools
 
 REAL_STREAM_LLM, REAL_CALL_LLM = advisor.stream_llm, advisor.call_llm
+# The analyst's steps ask in rounds since brief AR (`advisor.call_round`).
+REAL_CALL_ROUND = advisor.call_round
 OPUS = "anthropic/claude-opus-5.5"
 
 # Two invented funds, the shape of the reader's request: two cards from one
@@ -356,6 +358,7 @@ def openrouter(monkeypatch):
 
     monkeypatch.setattr(advisor, "stream_llm", REAL_STREAM_LLM)
     monkeypatch.setattr(advisor, "call_llm", REAL_CALL_LLM)
+    monkeypatch.setattr(advisor, "call_round", REAL_CALL_ROUND)
     monkeypatch.setattr(advisor, "_client", client)
     monkeypatch.setattr(advisor, "_fetch_model_list", lambda: {OPUS})
     monkeypatch.setenv("OPENROUTER_CHAT_MODEL", OPUS)

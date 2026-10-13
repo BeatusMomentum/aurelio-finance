@@ -24,6 +24,7 @@ import pytest
 
 from app import advisor, chain, chat, schemas, screen, tools
 from app.database import SessionLocal
+from conftest import script_the_chain
 from tests.test_chat import _decide, _events, _fake_stream, _kinds, _wants
 
 APP = pathlib.Path(chat.__file__).parent
@@ -380,7 +381,7 @@ def test_the_screen_never_reaches_the_analyzer(client, monkeypatch):
             text += "\n\nVERDICT: FITS"
         return {"analysis": text, "model": "m", "cost": None}
 
-    monkeypatch.setattr(advisor, "call_llm", chain_call)
+    script_the_chain(monkeypatch, chain_call)
     _fake_stream(monkeypatch, pieces=("Done.",))
     _events(_decide(client, card["card_id"], "confirm"))
 
@@ -479,7 +480,7 @@ def _one_run(monkeypatch) -> int:
             text += "\n\nVERDICT: FITS"
         return {"analysis": text, "model": "m", "cost": None}
 
-    monkeypatch.setattr(advisor, "call_llm", fake)
+    script_the_chain(monkeypatch, fake)
     with SessionLocal() as db:
         walk = chain.run_chain(db)
         while True:

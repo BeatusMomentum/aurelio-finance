@@ -21,6 +21,7 @@ import pytest
 
 from app import advisor, analytics, chain, models, tools
 from app.database import SessionLocal
+from conftest import script_the_chain
 
 TODAY = datetime.date.today()
 LONG_AGO = (TODAY - datetime.timedelta(days=400)).isoformat()
@@ -437,7 +438,7 @@ def _fake_chain(monkeypatch, verdicts):
             text += f"\n\nVERDICT: {said.pop(0) if len(said) > 1 else said[0]}"
         return {"analysis": text, "model": "m", "cost": 0.001}
 
-    monkeypatch.setattr(advisor, "call_llm", fake)
+    script_the_chain(monkeypatch, fake)
     return seen
 
 
@@ -455,7 +456,8 @@ def test_the_revision_reads_the_records_again_and_the_confidant_never_does(recor
     with SessionLocal() as db:
         _drain(db)
 
-    revision = next(c for c in seen if c["system"] == chain.REVISION_SYSTEM_PROMPT)
+    # Its tools' rules follow the role's own prompt since brief AR.
+    revision = next(c for c in seen if c["system"].startswith(chain.REVISION_SYSTEM_PROMPT))
     assert "- TOTAL cash on the accounts: 6000.00" in revision["user"]
     assert "- Casa al mare [house]" in revision["user"]
     assert revision["user"].index("# The figures you analysed") < revision["user"].index("# Your analysis")

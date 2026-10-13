@@ -4792,7 +4792,9 @@ def _walk_analysis(db: Session, args: RunAnalysisArgs) -> Iterator[Working]:
             break
         # A step OpenRouter turned away once and that was asked again says so
         # on its own line, where the reader reads the run as it goes.
-        label = f"{step.title} ({step.asked_again})" if step.asked_again else step.title
+        # And one that looked things up says how much, there too (brief AR).
+        said = "; ".join(s for s in (step.looked_up, step.asked_again) if s)
+        label = f"{step.title} ({said})" if said else step.title
         yield Working(step_no=step.step_no, label=label, duration_ms=step.duration_ms)
 
     return {

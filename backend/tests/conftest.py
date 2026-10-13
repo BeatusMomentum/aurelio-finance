@@ -167,13 +167,39 @@ _NETWORK_BOUNDARY = {
     catalogue: ("_fetch_overview",),
     # The LLM is a network call like any other, and the only one with a key
     # attached: a test that forgets to fake it spends real money against the
-    # real account. chain.py goes through call_llm, so one entry covers the
-    # advisor and the chain together; the chat goes through its streaming
-    # sibling, which is easier to reach by accident - a test that only checks
-    # the first event has already paid for the whole answer. The public model
-    # list, asked after a refusal, carries no key but is a call all the same.
-    advisor: ("call_llm", "stream_llm", "_fetch_model_list"),
+    # real account. chain.py goes through call_llm, and its analyst's steps,
+    # which look things up, through call_round (brief AR); the chat goes
+    # through its streaming sibling, which is easier to reach by accident - a
+    # test that only checks the first event has already paid for the whole
+    # answer. The public model list, asked after a refusal, carries no key but
+    # is a call all the same.
+    advisor: ("call_llm", "call_round", "stream_llm", "_fetch_model_list"),
 }
+
+
+def script_the_chain(monkeypatch, fake) -> None:
+    """Answer every step of the analysis with `fake`, a stand-in for
+    `advisor.call_llm` (system prompt, question, model -> its dict).
+
+    Since brief AR the analyst's and the revision's steps ask in rounds that
+    may look things up (`advisor.call_round`), and the other steps ask once.
+    A test that scripts the chain by its steps answers those steps here as a
+    round that looks nothing up: `fake` sees the system prompt the step is
+    sent (the role's own, its tools' rules after it for the analyst's steps),
+    the step's question and the model, as it always did."""
+
+    def call_round(system_prompt, messages, model=None, tools=None, kept_to=None):
+        got = fake(system_prompt, messages[0]["content"], model)
+        return advisor.Round(
+            content=got["analysis"],
+            calls=(),
+            usage=advisor.Usage(prompt_tokens=None, cached_tokens=None, cost=got.get("cost")),
+            model=got.get("model"),
+            asked_again=got.get("asked_again"),
+        )
+
+    monkeypatch.setattr(advisor, "call_llm", fake)
+    monkeypatch.setattr(advisor, "call_round", call_round)
 
 
 class NetworkReached(RuntimeError):

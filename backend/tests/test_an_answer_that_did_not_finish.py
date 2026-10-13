@@ -31,6 +31,8 @@ from app import advisor, chain, models
 from app.database import SessionLocal
 
 REAL_CALL_LLM, REAL_STREAM_LLM = advisor.call_llm, advisor.stream_llm
+# The analyst's steps ask in rounds since brief AR (`advisor.call_round`).
+REAL_CALL_ROUND = advisor.call_round
 
 
 def _completion(text, finish="stop", native=None, cost=0.004):
@@ -129,6 +131,7 @@ def openrouter(monkeypatch):
         )
 
     monkeypatch.setattr(advisor, "call_llm", REAL_CALL_LLM)
+    monkeypatch.setattr(advisor, "call_round", REAL_CALL_ROUND)
     monkeypatch.setattr(advisor, "stream_llm", REAL_STREAM_LLM)
     monkeypatch.setattr(advisor, "_client", client)
     return Fake
@@ -168,7 +171,7 @@ FITS = "Nothing here needs answering.\n\nVERDICT: FITS"
         ("content_filter", None),
         ("error", "error"),
         (None, None),  # nobody said it finished
-        ("tool_calls", "tool_use"),  # the chain offers no tools
+        ("tool_calls", "tool_use"),  # it asked for a tool and named none
     ],
 )
 def test_a_first_step_that_did_not_finish_stops_the_run_and_keeps_nothing(

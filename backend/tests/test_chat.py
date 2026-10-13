@@ -33,6 +33,7 @@ from app import (
     advisor, catalogue, chain, chat, composition, crud, models, prices, schemas, tools
 )
 from app.database import SessionLocal
+from conftest import script_the_chain
 
 # The real streaming function, captured at import time — before the autouse
 # `offline` fixture swaps the module attribute for a refusal — so the one test
@@ -371,7 +372,7 @@ def _run_the_chain(monkeypatch, verdict="What this means for you.", contested=Fa
             text += f"\n\nVERDICT: {'CONTESTED' if contested else 'FITS'}"
         return {"analysis": text, "model": model or "m", "cost": 0.004}
 
-    monkeypatch.setattr(advisor, "call_llm", fake)
+    script_the_chain(monkeypatch, fake)
     with SessionLocal() as db:
         walk = chain.run_chain(db)
         while True:
@@ -1581,7 +1582,7 @@ def test_confirming_streams_a_step_per_finished_step_then_the_answer(client, mon
             text += "\n\nVERDICT: FITS"
         return {"analysis": text, "model": "role/model", "cost": 0.004}
 
-    monkeypatch.setattr(advisor, "call_llm", chain_call)
+    script_the_chain(monkeypatch, chain_call)
     seen = _fake_stream(monkeypatch, pieces=("The analyzer says:",))
 
     events = _events(_decide(client, card["card_id"], "confirm"))
@@ -1616,7 +1617,7 @@ def test_what_comes_back_is_the_opening_and_the_address_not_the_document(
             text += "\n\nVERDICT: FITS"
         return {"analysis": text, "model": "role/model", "cost": 0.004}
 
-    monkeypatch.setattr(advisor, "call_llm", chain_call)
+    script_the_chain(monkeypatch, chain_call)
     seen = _fake_stream(monkeypatch, pieces=("Read.",))
     events = _events(_decide(client, card["card_id"], "confirm"))
 
@@ -1723,7 +1724,7 @@ def test_the_sub_agents_never_read_a_word_of_the_conversation(client, monkeypatc
             text += "\n\nVERDICT: FITS"
         return {"analysis": text, "model": "m", "cost": None}
 
-    monkeypatch.setattr(advisor, "call_llm", chain_call)
+    script_the_chain(monkeypatch, chain_call)
     _fake_stream(monkeypatch, pieces=("Done.",))
     _events(_decide(client, card["card_id"], "confirm"))
 
@@ -1752,7 +1753,7 @@ def test_a_chain_that_breaks_leaves_the_card_answerable_and_says_why(client, mon
             raise advisor.AdvisorError("LLM call failed: boom")
         return {"analysis": "x", "model": "m", "cost": None}
 
-    monkeypatch.setattr(advisor, "call_llm", flaky)
+    script_the_chain(monkeypatch, flaky)
     events = _events(_decide(client, card["card_id"], "confirm"))
     assert _kinds(events) == ["start", "step", "error"]
     assert "boom" in events[-1]["detail"]

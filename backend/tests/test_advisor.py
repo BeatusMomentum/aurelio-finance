@@ -18,6 +18,7 @@ import pytest
 
 from app import advisor, chain, chat, models
 from app.database import SessionLocal
+from conftest import script_the_chain
 
 # The real call, captured at import time — before the autouse `offline` fixture
 # replaces the module attribute with a refusal — so the one test about what it
@@ -248,7 +249,7 @@ def _fake_chain_calls(monkeypatch, confidant=("FITS",)):
             text += f"\n\nVERDICT: {said}"
         return {"analysis": text, "model": model or "default/model", "cost": 0.002}
 
-    monkeypatch.setattr(advisor, "call_llm", fake)
+    script_the_chain(monkeypatch, fake)
     return seen
 
 
@@ -321,7 +322,7 @@ def test_a_confidant_that_forgets_to_say_is_answered_anyway(client, monkeypatch)
         seen.append({"system": system_prompt})
         return {"analysis": f"output-{len(seen)}", "model": model, "cost": None}
 
-    monkeypatch.setattr(advisor, "call_llm", no_marker)
+    script_the_chain(monkeypatch, no_marker)
     with SessionLocal() as db:
         _, run = _run(db)
         assert any(s.role == "revision" for s in run.steps)
@@ -426,7 +427,7 @@ def test_a_run_nobody_marked_is_counted_as_neither(client, monkeypatch):
     def no_marker(system_prompt, user_content, model=None):
         return {"analysis": "said nothing about it", "model": "m", "cost": None}
 
-    monkeypatch.setattr(advisor, "call_llm", no_marker)
+    script_the_chain(monkeypatch, no_marker)
     with SessionLocal() as db:
         _run(db)
 
@@ -558,7 +559,7 @@ def test_a_chain_that_fails_saves_nothing(client, monkeypatch):
             raise advisor.AdvisorError("LLM call failed: boom")
         return {"analysis": "ok", "model": "m", "cost": None}
 
-    monkeypatch.setattr(advisor, "call_llm", flaky)
+    script_the_chain(monkeypatch, flaky)
     with SessionLocal() as db:
         with pytest.raises(advisor.AdvisorError):
             _run(db)

@@ -26,6 +26,8 @@ import pytest
 from app import advisor, tools
 
 REAL_CALL_LLM, REAL_STREAM_LLM = advisor.call_llm, advisor.stream_llm
+# The analyst's steps ask in rounds since brief AR (`advisor.call_round`).
+REAL_CALL_ROUND = advisor.call_round
 GONE = "qwen/qwen3.8-max"
 LISTED_TODAY = {"qwen/qwen3.8-max-0902", "qwen/qwen3.8-max-prime", "anthropic/claude-sonnet-4.6"}
 NO_ENDPOINTS = (404, {"error": {"code": 404, "message": f"No endpoints found for {GONE}."}})
@@ -55,6 +57,7 @@ def openrouter(monkeypatch):
         )
 
     monkeypatch.setattr(advisor, "call_llm", REAL_CALL_LLM)
+    monkeypatch.setattr(advisor, "call_round", REAL_CALL_ROUND)
     monkeypatch.setattr(advisor, "stream_llm", REAL_STREAM_LLM)
     monkeypatch.setattr(advisor, "_client", client)
     for var in ("OPENROUTER_CHAT_MODEL", "OPENROUTER_ANALYST_MODEL", "OPENROUTER_CONFIDANT_MODEL"):

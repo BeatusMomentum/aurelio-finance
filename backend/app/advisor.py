@@ -1816,7 +1816,9 @@ def call_llm(system_prompt: str, user_content: str, model: str | None = None) ->
     what another wrote: a marker would have every step pay for its input 1.25
     times over, for an entry nothing reads. The one prefix two steps share is
     the second revision repeating the first's figures, which pays only on the
-    runs that get that far."""
+    runs that get that far. A step that looks things up (brief AR) asks in
+    rounds through `call_round` instead, which does ask on every round that
+    offers tools: each sends the one before it whole, and reads it."""
     client = _client()
     model = resolve_model(model)
     messages = [
@@ -1868,6 +1870,154 @@ def call_llm(system_prompt: str, user_content: str, model: str | None = None) ->
         "cost": _cost(completion),
         "asked_again": asked_again,
     }
+
+
+# --- A step of the analysis that looks things up (brief AR) ------------------------
+
+# The session every request of the analysis to an Anthropic model says it belongs
+# to, as the chat's requests name SESSION_ID: a step's rounds then reach the
+# provider that holds what the round before them wrote. The analysis's own, not
+# the chat's: no request of one begins as a request of the other, and
+# OpenRouter's logs tell the two apart.
+ANALYSIS_SESSION_ID = "aurelio-analysis"
+
+
+@dataclass(frozen=True)
+class Round:
+    """One request of a step that may look things up: what it wrote, the tools
+    it asked for, what it read and cost, the model that answered, and the words
+    for its second ask when there was one."""
+
+    content: str
+    calls: tuple[ToolCall, ...]
+    usage: Usage
+    model: str
+    asked_again: str | None = None
+
+
+def call_round(
+    system_prompt: str,
+    messages: list[dict],
+    model: str | None = None,
+    tools: list[dict] | None = None,
+    kept_to: int | None = None,
+) -> Round:
+    """One round of a step of the analysis that may look things up (brief AR):
+    not streamed, as `call_llm` asks, with the step's ceiling, STEP_MAX_TOKENS,
+    and asked once more on ASKED_AGAIN_ON and on nothing else, a cut least of
+    all.
+
+    `messages` is the step's conversation so far: its question, then each
+    round's tool calls and what they answered. `tools` is what the round
+    offers; None for the round with none, which has to answer in words.
+    `kept_to` is for the last round that offers tools: the index in
+    `messages` of the last message the round before it sent.
+
+    For a model that caches only on request (`caches_on_request`) every round
+    that offers tools asks the provider to keep what it read: at the system
+    prompt, which keeps the tools with it since they come first; at the step's
+    question, the figures, the long part, so that a round after one of many
+    tool calls still reads them (a marker looks back about twenty blocks for an
+    earlier entry); and at the end, through the top-level marker, which the next
+    round, sending this one whole, reads up to. Three markers, under
+    Anthropic's four. The last round that offers tools puts its third at
+    `kept_to` instead of the end: it reads all the round before it wrote and
+    keeps nothing new, since the round after it offers no tool and could read
+    none of it. Measured in brief AR's check (2026-10-13), on P1's requests
+    replayed: a round marked so read the 11,376 tokens the round before it had
+    written and wrote none, so OpenRouter carries a marker on a tool's answer
+    to Anthropic. The round with no tool asks for nothing to be kept:
+    without the tools its request no longer begins as the rounds' before it
+    did, so it reads nothing they wrote, and no round comes after it to read
+    what it would write. In brief AR's P1 (2026-10-12) one such round read
+    nothing and wrote 16,915 tokens that no request read, each billed a
+    quarter above an unmarked one. The chat's last round asks for nothing
+    either (`chat.py`). Every request of the step names the analysis's session
+    (ANALYSIS_SESSION_ID); any other model's request carries neither.
+
+    How the round ended is read before what it says. "stop" is an answer, and
+    "tool_calls" too on a round that offered tools; anything else raises
+    `Unfinished`, with the round's own cost. A round with neither words nor
+    calls is an empty response."""
+    client = _client()
+    model = resolve_model(model)
+    system: str | list[dict] = system_prompt
+    asked = messages
+    extra: dict = {}
+    if caches_on_request(model):
+        extra = {"session_id": ANALYSIS_SESSION_ID}
+        if tools:
+            system = [{"type": "text", "text": system_prompt, "cache_control": _EPHEMERAL}]
+            marked = {0} if kept_to is None else {0, kept_to}
+            asked = [_kept(m) if i in marked else m for i, m in enumerate(messages)]
+            if kept_to is None:
+                extra["cache_control"] = _EPHEMERAL
+    request = {
+        "model": model,
+        "messages": [{"role": "system", "content": system}, *asked],
+        "max_tokens": STEP_MAX_TOKENS,
+        **({"tools": tools} if tools else {}),
+        **({"extra_body": extra} if extra else {}),
+    }
+    asked_again = None
+    try:
+        completion = client.chat.completions.create(**request)
+    except Exception as exc:  # network / auth / model errors -> a sentence (_refused)
+        status = getattr(exc, "status_code", None)
+        if not isinstance(exc, sdk().APIStatusError) or status not in ASKED_AGAIN_ON:
+            raise _refused(exc, model) from exc
+        try:
+            completion = client.chat.completions.create(**request)
+        except Exception as again:
+            refused = _refused(again, model)
+            refused.args = (
+                f"{refused} The request was asked twice: OpenRouter had refused the first "
+                f"ask with {status} too, which it says it does not bill.",
+            )
+            raise refused from again
+        asked_again = f"asked again after OpenRouter's {status}, which it says it does not bill"
+
+    failure = getattr(completion, "error", None)
+    if failure:
+        raise _failed_partway(failure, _cost(completion))
+    choice = completion.choices[0] if completion.choices else None
+    message = choice.message if choice is not None else None
+    content = (getattr(message, "content", None) or "") if message is not None else ""
+    ended = getattr(choice, "finish_reason", None)
+    if choice is not None and ended not in (("stop", "tool_calls") if tools else ("stop",)):
+        raise _unfinished(
+            ended,
+            getattr(choice, "native_finish_reason", None),
+            _cost(completion),
+            wrote=bool(content),
+            ceiling=STEP_MAX_TOKENS,
+            per="a step",
+        )
+    calls = tuple(
+        ToolCall(id=c.id, name=c.function.name, arguments=c.function.arguments or "")
+        for c in ((getattr(message, "tool_calls", None) or ()) if tools else ())
+    )
+    if ended == "tool_calls" and not calls:
+        # Asked for tools and named none: neither an answer nor a request this
+        # loop can answer, so not taken for a finished one.
+        native = getattr(choice, "native_finish_reason", None)
+        provider = f", the provider {native}" if native and native != ended else ""
+        raise Unfinished(
+            f"The model stopped before {'finishing' if content else 'writing'} its answer: it "
+            f"said it was asking for a tool and named none (OpenRouter reported {ended}{provider}).",
+            reason=ended,
+            native=native,
+            cost=_cost(completion),
+        )
+    if not content and not calls:
+        raise AdvisorError("The model returned an empty response.")
+    return Round(
+        content=content,
+        calls=calls,
+        usage=_usage(getattr(completion, "usage", None)),
+        model=model,
+        asked_again=asked_again,
+    )
 
 
 def _cost(completion) -> float | None:
