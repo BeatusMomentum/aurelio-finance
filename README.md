@@ -83,8 +83,8 @@ and [what an AI financial advisor costs](https://github.com/LosaLosSantos/aureli
 
 The default model is Claude Opus 5.5 ($4 per million input tokens, $20 per
 million output tokens); you can pick another in the chat. What it cost,
-measured in October 2026 (the chat's rows on 11 and 12 October, a web search
-on 9 October, on a test database):
+measured in October 2026 (the chat's rows on 11 and 12 October, an analysis on
+12 October, a web search on 9 October, on a test database):
 
 | | cost |
 |---|---|
@@ -94,7 +94,7 @@ on 9 October, on a test database):
 | Confirming a card, with the reply after it | $0.014 to $0.049 |
 | Whether something is worth buying, and how much, in two or three rounds, its searches included | $0.067 to $0.24 |
 | Each web search, on top of the round that asked for it | $0.0073 to $0.0075 |
-| An analysis | $0.33 to $0.51 |
+| An analysis, its lookups included | $0.64 |
 
 ## Development
 
