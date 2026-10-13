@@ -159,6 +159,23 @@ you confirm, and the write then takes the normal path (`crud`, `unit_of_work`,
 between what the analyst sees and what the chat sees is code, not a choice left
 to the model.
 
+**The analyst checks, and still does not know whose figures they are.** The
+analysis is an analyst who sees your records and not you, a confidant who sees
+you and not one figure, a revision when the challenge is contested, and a
+synthesis. The analyst and its revision can look things up before they answer:
+every axis of the look-through, what the fund catalogue holds on a held fund's
+index and at which costs, what an instrument is and its latest close, what a
+purchase or a sale would do to your exposure, and, on Anthropic's models, the
+web. None of these reads your profile answers or your goals. Of your Profile
+the analyst reads one field, the country you pay tax in, with the rates you
+declared beside it, so that a tax is quoted rather than invented. A test plants
+markers in the rest and checks that none reaches anything the analyst reads,
+its tools' answers included, that the tax country does, and that nothing of
+your records reaches the confidant, who is offered no tool at all. A step looks
+things up in at most
+four requests and three web searches, so what a run costs moves with what it
+looks up.
+
 **Stale is a fingerprint, not a clock.** Every proposal declares what it
 depends on; confirming it computes that again and refuses with a 409 if
 anything moved. No live price enters a fingerprint: a card does not expire
@@ -171,7 +188,10 @@ catalogue; a share by a symbol that Yahoo lists as a share. The old instruction
 ("avoid recommending specific securities") was not removed: it changed form,
 from an instruction into a structure. A commodity is named only through a
 product that holds it, which the catalogue's replication says: a future, or a
-product that follows futures through a swap, holds none of it.
+product that follows futures through a swap, holds none of it. The analysis
+says what the catalogue holds beside a fund it judges (how many funds on the
+same index, at which costs) and names none; the chat names one, on a card,
+when you ask.
 
 **How much is computed, and the chat chooses within it.** A figure for a
 purchase, said to a person, is not left to a model's arithmetic. The app works
@@ -202,6 +222,11 @@ has already been paid for.
   listing every holding (an issuer's own file) to one that publishes an
   extract, or that loses an axis (countries or sectors), does not replace the
   entry that has them.
+- A company inside a bond fund is its debt, not its stock. A bond fund's file
+  lists its issuers' notes under the issuers' names, so under the name alone a
+  company's bonds and its shares in an equity fund read as one stock held
+  twice. The issuers' files say what each line is, and only a share counts in
+  the companies and the overlap; a line nothing describes counts as before.
 - "Nobody answered" and "this instrument does not exist" are different
   statements. Presenting the first as the second teaches people to correct a
   ticker that was right. There is a third: "that day has no close", which says
