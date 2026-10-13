@@ -1557,7 +1557,7 @@ def test_the_card_comes_first_and_quotes_what_the_last_run_measured(client, monk
     assert first["tool"] == "run_analysis" and first["outcome"] == "pending"
     assert first["title"] == "Run the analyzer over everything on record"
     assert first["arguments"] == {}, "an argument here would be steering it"
-    assert f"{chain.MIN_STEPS} model calls" in first["consequence"]
+    assert f"{chain.MIN_STEPS} steps" in first["consequence"]
     assert "no measured time or cost to quote" in first["consequence"]
 
     _run_the_chain(monkeypatch)

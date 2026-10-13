@@ -80,8 +80,8 @@ that went out. A turn runs at most WEB_SEARCHES_PER_TURN; a call past them is
 answered in words, and the tools stay as they were.
 
 And this chat is an ORCHESTRATOR now. `run_analysis` is a card like any other
-write, and confirming it runs the advisor chain — three to six model calls, a
-minute of them — as SUB-AGENTS whose context it does not write. That last part
+write, and confirming it runs the advisor chain (three to six steps, a
+minute of them) as SUB-AGENTS whose context it does not write. That last part
 is not a preference: the chain's whole value is that the analyst has not seen
 the person and the confidant has not seen a figure, and a model asked to brief
 a colleague summarises, and a summary carries the numbers across. The
@@ -644,8 +644,8 @@ def _messages(
 class Pending:
     """A card the reader has confirmed whose tool has NOT run yet.
 
-    Only for a tool that reports as it goes: `run_analysis`, three to six model
-    calls and a minute of them, and `change_base_currency`, which asks the
+    Only for a tool that reports as it goes: `run_analysis`, three to six
+    steps and a minute of them, and `change_base_currency`, which asks the
     ECB's feed for the new base's rates before the setting moves (brief AN), and
     must not hold SQLite's write lock while it waits. Everything else is written before
     the stream starts, which is what makes "a stream that starts at all is a

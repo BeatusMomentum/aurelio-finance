@@ -4729,19 +4729,29 @@ def _propose_analysis(db: Session, args: RunAnalysisArgs) -> Proposal:
     """The card that asks before the spend, quoting measurements only.
 
     Three things the reader is owed before a minute of their attention goes:
-    how many model calls, how long the last one took, and what it cost. The
-    first is a fact about the code; the other two are read off the last run and
-    left out entirely when there has never been one — "about a minute, a few
-    cents" would be a guess printed as a fact, and the reader would have no way
-    to tell it from the measured version of the same sentence.
+    how many steps, how long the last run took, and what it cost. The first is
+    a fact about the code; the other two are read off the last run and left
+    out entirely when there has never been one: "about a minute, a few cents"
+    would be a guess printed as a fact, and the reader would have no way to
+    tell it from the measured version of the same sentence.
+
+    And since brief AR, what a run may look up, with its bounds: the analyst's
+    steps can ask in rounds and search the web, so a run's cost moves with
+    what they look up, and the last run's price is one run's. No column of a
+    step says whether it looked anything up, and none was added for the card
+    (the reader's choice, 2026-10-12), so the card says the bounds and not
+    what the last run did. It said "model calls" until then, which a step
+    that asks in rounds made untrue.
     """
     run = crud.get_latest_chain_run(db)
     took, spent = _seconds(run), _spent(run)
-    engines = sorted(
-        {
-            advisor.resolve_model(chain._model_for("analyst")),
-            advisor.resolve_model(chain._model_for("confidant")),
-        }
+    analyst = advisor.resolve_model(chain._model_for("analyst"))
+    engines = sorted({analyst, advisor.resolve_model(chain._model_for("confidant"))})
+    looks = (
+        "The analyst's steps may look things up first, in up to "
+        f"{chain.ROUNDS_PER_STEP} requests"
+        + (f" and {chain.SEARCHES_PER_STEP} web searches" if web_search(analyst) else "")
+        + " a step, so what a run costs moves with what they look up."
     )
 
     measured = []
@@ -4760,10 +4770,10 @@ def _propose_analysis(db: Session, args: RunAnalysisArgs) -> Proposal:
         fingerprint=_DEPENDS_ON_NOTHING,
         touches="a new analysis",
         consequence=(
-            f"{chain.MIN_STEPS} model calls, up to {chain.MAX_STEPS} if the "
-            f"disagreement is real, on {' and '.join(engines)}. {last} A step "
-            "OpenRouter turns away with 500, 502 or 503, which it says it does not "
-            "bill, is asked once more."
+            f"{chain.MIN_STEPS} steps, up to {chain.MAX_STEPS} if the disagreement is "
+            f"real, on {' and '.join(engines)}. {looks} {last} A request OpenRouter "
+            "turns away with 500, 502 or 503, which it says it does not bill, is asked "
+            "once more."
         ),
     )
 

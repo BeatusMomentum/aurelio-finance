@@ -17,7 +17,7 @@ The question is stored and the context built inside the request, before the
 response starts; the answer is stored when the stream ends, in a session of
 its own. The request's session is never used from inside the stream.
 
-One card is different, and it is `run_analysis`: three to six model calls, a
+One card is different, and it is `run_analysis`: three to six steps, a
 minute of them, so its work happens ON the stream and arrives as `step` events.
 Everything else about it is unchanged — the decision is still taken before the
 first byte, and the reader still hears what the model makes of it afterwards.

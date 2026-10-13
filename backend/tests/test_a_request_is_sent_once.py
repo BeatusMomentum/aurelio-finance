@@ -282,16 +282,17 @@ def test_the_step_asked_again_says_so_in_its_line(client, openrouter):
 
 
 def test_the_analysis_card_says_which_steps_may_be_asked_twice(client):
-    """The card quotes how many model calls a run makes, so the one kind of
-    second ask is said there too, before the reader confirms."""
+    """The card quotes how many steps a run takes, so the one kind of second
+    ask is said there too, before the reader confirms: per request since
+    brief AR, when a step may ask in rounds."""
     with SessionLocal() as db:
         card = tools.answer(db, advisor.ToolCall(id="call_1", name="run_analysis", arguments="{}"))
     consequence = card["card"]["consequence"]
     assert (
-        f"{chain.MIN_STEPS} model calls, up to {chain.MAX_STEPS} if the disagreement is real"
+        f"{chain.MIN_STEPS} steps, up to {chain.MAX_STEPS} if the disagreement is real"
         in consequence
     )
     assert (
-        "A step OpenRouter turns away with 500, 502 or 503, which it says it does not "
+        "A request OpenRouter turns away with 500, 502 or 503, which it says it does not "
         "bill, is asked once more."
     ) in consequence
