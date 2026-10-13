@@ -322,6 +322,28 @@ def _company_key(name: str) -> str:
     return " ".join(words) or (name or "").upper()
 
 
+# What an issuer's file calls a line that is a company's stock. iShares says
+# what each line is (`issuers.fetch_ishares`); read on two of its files on
+# 2026-10-12, an equity fund's lines were Equity, Cash, FX, Futures and Money
+# Market ones, a bond fund's Fixed Income, Cash and Money Market ones.
+SHARE_KINDS = frozenset({"Equity"})
+
+
+def _a_share(holding: dict) -> bool:
+    """Whether a holding line is a company's stock, for the companies and the
+    overlap: one its source calls equity, or one it says nothing about.
+
+    A bond fund lists its issuers' notes under the issuers' names, and under
+    `_company_key` "ALFA CORP" in a bond fund is the same key as Alfa Corp's
+    shares in an equity fund. On brief AR's seed (2026-10-12) one company read
+    as held via a bond fund and an equity fund, "same stock inside 2+ funds",
+    and the analyst had to guess the bond fund held debt. A line whose kind
+    nobody said (every source but an issuer's file that says it, and every
+    entry cached before) counts as it always did."""
+    kind = holding.get("kind")
+    return kind is None or kind in SHARE_KINDS
+
+
 def _humanize(key: str) -> str:
     """'unitedStates' / 'consumer_cyclical' -> 'United States' / 'Consumer Cyclical'."""
     key = key.replace("_", " ")
@@ -836,7 +858,11 @@ def _aggregate(
             for s in comp["sectors"]:
                 key = _canonical_sector(s["name"])
                 sectors[key] = sectors.get(key, 0.0) + weight * s["pct"]
-            for h in comp["top_holdings"]:
+            # The companies and the overlap read a company's stock only: a line
+            # that is its debt, cash, a currency or a future is not one
+            # (`_a_share`). The countries and the sectors above keep every line.
+            shares = [h for h in comp["top_holdings"] if _a_share(h)]
+            for h in shares:
                 key = _company_key(h["name"])
                 entry = overlap.setdefault(
                     key, {"pct": 0.0, "funds": [], "fund_ids": set(), "label": h["name"]}
@@ -846,7 +872,7 @@ def _aggregate(
                 entry["fund_ids"].add(fund_id)
                 if len(h["name"]) > len(entry["label"]):
                     entry["label"] = h["name"]
-            if comp["top_holdings"]:
+            if shares:
                 holdings_from.setdefault(comp["source"], []).append(lookup)
         rows.append(row)
 

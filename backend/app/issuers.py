@@ -8,14 +8,16 @@ inherits that error. The issuers publish EVERY position, so we ask them first.
 
 What each one gives:
 - **iShares**: 300-1300+ rows per fund, refreshed daily, with an ISIN, a
-  country of risk and a sector on every line. One screener call maps any
+  country of risk, a sector and what the line is (its asset class: Equity,
+  Fixed Income, Cash...) on every line. One screener call maps any
   ISIN to the product id; ISHARES_PRODUCT_IDS below stands in for it for
   the funds it lists, because the screener is the part that moves.
 - **Vanguard**: 4000+ rows, month-end (so ~3 weeks behind), with an ISO
-  country code and a sector, but NO per-row ISIN. Its GraphQL schema exposes
-  no ISIN field and introspection is disabled, so ISIN -> portfolio id cannot
-  be discovered programmatically; the map below is seeded by hand and grows as
-  funds are needed.
+  country code and a sector, but NO per-row ISIN and nothing that says what a
+  line is. Its GraphQL schema exposes no ISIN field and introspection is
+  disabled, so ISIN -> portfolio id cannot be discovered programmatically; the
+  map below is seeded by hand and grows as funds are needed. The two funds it
+  holds are equity funds, whose lines are shares.
 
 These are the sites' own endpoints, not a documented API: they can change
 without notice. That is exactly why they sit at the TOP of a waterfall rather
@@ -160,6 +162,8 @@ def _aggregate(rows: list[dict], name: str | None) -> dict:
             sectors[r["sector"]] = sectors.get(r["sector"], 0.0) + pct
 
     ranked = sorted(rows, key=lambda r: r["pct"], reverse=True)
+    # A line's kind travels only where its file said one: absent and "not said"
+    # are the same answer, and every entry cached before reads that way.
     return {
         "name": name,
         "countries": sorted(
@@ -173,7 +177,12 @@ def _aggregate(rows: list[dict], name: str | None) -> dict:
             reverse=True,
         ),
         "top_holdings": [
-            {"name": r["name"], "pct": round(r["pct"], 4), "isin": r.get("isin")}
+            {
+                "name": r["name"],
+                "pct": round(r["pct"], 4),
+                "isin": r.get("isin"),
+                **({"kind": r["kind"]} if r.get("kind") else {}),
+            }
             for r in ranked
         ],
         "holdings_count": len(rows),
@@ -221,6 +230,13 @@ def fetch_ishares(isin: str) -> dict:
         column("countryOfRisk"),
         column("sectorName"),
     )
+    # What each line is, as the file says it. Read on 2026-10-12 (brief AR) in
+    # two files: an equity fund's 1,249 "Equity" lines beside "Cash", "FX",
+    # "Futures" and "Money Market" ones, and a bond fund's 19,977 "Fixed
+    # Income". A bond fund lists its issuers' notes under the issuers' own
+    # names, so without this a company's debt met its shares held by an equity
+    # fund as one stock held twice (`composition._a_share`).
+    kinds = column("assetClass")
     if not names:
         raise IssuerError(f"iShares returned no holdings for {isin}")
 
@@ -231,6 +247,7 @@ def fetch_ishares(isin: str) -> dict:
         except (IndexError, TypeError, ValueError):
             continue
         country = countries[i] if i < len(countries) else None
+        kind = str(kinds[i]).strip() if i < len(kinds) and kinds[i] else ""
         rows.append(
             {
                 "name": str(name).title(),
@@ -240,6 +257,7 @@ def fetch_ishares(isin: str) -> dict:
                 # information, so it becomes Other rather than vanishing.
                 "country": None if country in (None, "", "-") else str(country),
                 "sector": (sectors[i] if i < len(sectors) else None) or None,
+                "kind": kind or None,
             }
         )
     return _aggregate(rows, None)
