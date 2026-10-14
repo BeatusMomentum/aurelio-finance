@@ -177,9 +177,32 @@ def _position_caveats(r: dict) -> list[str]:
     advisor was the only reader never told, which is backwards: it is the one
     consumer that actually reasons about the figures."""
     notes: list[str] = []
-    if r.get("avg_cost") is not None and not r.get("cost_known"):
+    if r.get("avg_cost") is not None and not r.get("cost_known") and r.get("book_paid"):
+        # Part of it paid (brief AV): it said COST UNKNOWN of all of it,
+        # purchases on record included. What was paid, what is a situation's
+        # value, and which part of the P/L is a gain.
+        line = (
+            f"COST PARTLY PAID: {r['book_paid']:.2f} of the book "
+            f"({r['book_paid'] / r['book_value'] * 100:.1f}%) is money paid, for "
+            f"{r['units_paid']:g} of the {r['quantity']:g} units (buys, or a cost typed on a "
+            "situation); the rest is the value a situation recorded"
+        )
+        if r.get("delta_paid") is not None:
+            line += (
+                f". Of the P/L, {r['delta_paid']:+.2f} is a gain or a loss on the units paid "
+                f"for and {r['delta'] - r['delta_paid']:+.2f} is movement since that situation, "
+                "NOT profit"
+            )
+        notes.append(line)
+        if r.get("cost_estimated"):
+            notes.append(
+                "the part paid is ESTIMATED: some or all of it is a plan's buy priced at a "
+                "market close, or a cost derived from a reported % return, not read off a "
+                "contract note"
+            )
+    elif r.get("avg_cost") is not None and not r.get("cost_known"):
         notes.append(
-            "COST UNKNOWN — no purchase on record, so the average cost above is "
+            "COST UNKNOWN: no purchase on record, so the average cost above is "
             "the price the situation was recorded at, and the P/L is movement since "
             "then, NOT profit"
         )
@@ -473,7 +496,16 @@ def _render_positions(portfolio: dict, funds: dict) -> list[str]:
         lines.append("; ".join(parts))
     if any(_isin(r) in funds["funds"] for r in portfolio["rows"]):
         lines.append(_catalogue_source(funds))
-    lines.append(f"- TOTAL cost (what was paid): {portfolio['total_book']:.2f}")
+    # Called "what was paid" whatever it held (brief AV): on the demo with an
+    # invented fund, 22,246.00 of which 1,066.00 had been paid.
+    if abs(portfolio["total_book"] - portfolio["total_book_paid"]) >= 0.005:
+        lines.append(
+            f"- TOTAL book: {portfolio['total_book']:.2f}, of which "
+            f"{portfolio['total_book_paid']:.2f} is money paid and the rest situations' "
+            "values with no purchase price on record"
+        )
+    else:
+        lines.append(f"- TOTAL cost (what was paid): {portfolio['total_book']:.2f}")
     if portfolio["total_market"] is not None:
         carried = sum(
             r["observed_value"] for r in portfolio["rows"] if r["market_value"] is None

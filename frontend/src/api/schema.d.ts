@@ -4100,7 +4100,7 @@ export interface components {
             asset_name: string;
             /**
              * Avg Cost
-             * @description book_value / quantity (average-cost accounting)
+             * @description book_value / quantity (average-cost accounting): a price paid only where cost_known; otherwise, in part or whole, a situation's price
              */
             avg_cost: number | null;
             /**
@@ -4110,7 +4110,7 @@ export interface components {
             book_paid: number;
             /**
              * Book Value
-             * @description What this position COST, in the base currency: the recorded purchase price on a quantity-based holding where there is one, otherwise the value its photograph was taken at (and then cost_known is False, which is how a reader tells the two apart). A value-only lump keeps its photograph's figure here even when a cost was recorded against it — the projection has no units to merge a cost into, and the row says cost_known False rather than claim one. The base the P/L is measured against; never an answer to 'what is it worth'.
+             * @description What this position COST, in the base currency: the purchase price recorded on its situation, with or without units, and the buys since; where no price was recorded, the value its photograph was taken at, which is not a cost. `book_paid` says how much of it is money paid, and cost_known is True only when all of it is. The base the P/L is measured against; never an answer to 'what is it worth'.
              */
             book_value: number;
             /**

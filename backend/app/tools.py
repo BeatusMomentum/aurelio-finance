@@ -1632,11 +1632,21 @@ def _ledger_moves(db: Session, change: _LedgerChange) -> tuple[list[dict], list[
         costs = [
             p.book_value / p.quantity if p is not None and p.quantity else None for p in (before, later)
         ]
+
+        def paid(p) -> str:
+            """What the average is an average of, when not only prices paid
+            (brief AV): a blend's average read as a cost."""
+            if p.cost_known or not p.book_value:
+                return ""
+            if not p.book_paid:
+                return ", no cost on record"
+            return f", {p.book_paid / p.book_value * 100:.0f}% of it paid"
+
         if None not in costs and f"{costs[0]:.2f}" != f"{costs[1]:.2f}":
             lines.append({
                 "field": f"Average cost of {what} at {holder.name}",
-                "now": f"{costs[0]:.2f} {base}",
-                "proposed": f"{costs[1]:.2f} {base}",
+                "now": f"{costs[0]:.2f} {base}{paid(before)}",
+                "proposed": f"{costs[1]:.2f} {base}{paid(later)}",
             })
     return lines, said
 

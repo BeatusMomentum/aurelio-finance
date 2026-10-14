@@ -39,7 +39,7 @@ import type { WatchlistItem } from "../api/watchlist";
 import { Row, RowsOrEmpty, Section, apiError, btnClass, cardClass, inputClass, locale, money, todayISO, CURRENCY_LIST } from "./ui";
 import { dividendWord } from "./dividendLine";
 import { ageWords } from "./calendarDays";
-import { COST_WORDS } from "./costWords";
+import { COST_WORDS, paidShare, plSplit, pricedPaid } from "./costWords";
 import { estimatedTotal, movementLine, realizedMovement, taxPanelShown } from "./taxWords";
 import { readReason } from "./lookThroughReason";
 import {
@@ -202,6 +202,35 @@ function TaxEstimatePanel({ est, baseCurrency }: { est: TaxEstimate; baseCurrenc
   );
 }
 
+/* The P/L of a row partly paid (brief AV, the reader's choice): the gain or
+   loss on the units paid for, in colour, then the movement on the rest since
+   its situation, which is not a profit. One figure claimed the whole of it
+   (a blend) or none of it ("cost unknown"). */
+function SplitPL({ row, base }: { row: PortfolioData["rows"][number]; base: string }) {
+  const split = plSplit(row);
+  if (!split) return null;
+  const fmt = money(base);
+  // The sign is held to its figure: at 390 the cell is narrow, and a "+"
+  // left alone on a line above "€30" was measured.
+  return (
+    <>
+      <div className={toneClass(split.paid)}>
+        <span className="whitespace-nowrap">
+          {split.paid >= 0 ? "+" : ""}
+          {fmt.format(split.paid)}
+        </span>
+        <span className="ml-1 text-xs">({pctFmt.format(split.paid / row.book_paid)})</span>
+      </div>
+      <div className="text-[0.65rem] font-normal text-ink-faint">on the part paid</div>
+      <div className="whitespace-nowrap">
+        {split.movement >= 0 ? "+" : ""}
+        {fmt.format(split.movement)}
+      </div>
+      <div className="text-[0.65rem] font-normal text-ink-faint">since situation</div>
+    </>
+  );
+}
+
 function fmtDate(iso: string | null): string {
   return iso ? new Date(iso + "T00:00:00").toLocaleDateString(locale) : "";
 }
@@ -358,6 +387,9 @@ export default function Portfolio({
     0,
   );
   const anyDelta = data.rows.some((r) => r.delta != null);
+  // Of that P/L, the part on money paid, when some priced row is not all
+  // paid (brief AV): the rest is movement since a situation.
+  const onPaid = pricedPaid(data.rows);
   const carried = data.rows.reduce(
     (acc, r) => (r.market_value == null ? acc + r.observed_value : acc),
     0,
@@ -389,6 +421,12 @@ export default function Portfolio({
                 {money(data.base_currency).format(pricedDelta)}
                 <span className="ml-1 text-xs font-normal text-ink-faint">
                   on priced rows
+                  {onPaid != null && (
+                    <>
+                      , of which {onPaid >= 0 ? "+" : ""}
+                      {money(data.base_currency).format(onPaid)} on money paid
+                    </>
+                  )}
                 </span>
               </span>
             )}
@@ -539,11 +577,16 @@ export default function Portfolio({
                   <td className="px-4 py-2.5 text-right text-ink-soft">
                     {r.avg_cost == null ? (
                       "n/a"
-                    ) : r.cost_known ? (
+                    ) : r.cost_known || paidShare(r) ? (
                       <>
                         {money(data.base_currency).format(r.avg_cost)}
                         {r.cost_estimated && (
                           <span className="ml-1 text-[0.65rem] text-warn">est.</span>
+                        )}
+                        {/* Part of it paid, the rest a situation's value
+                            (brief AV): it said "cost unknown" of all of it. */}
+                        {paidShare(r) && (
+                          <div className="text-[0.65rem] text-ink-faint">{paidShare(r)}</div>
                         )}
                       </>
                     ) : (
@@ -584,10 +627,16 @@ export default function Portfolio({
                       (r.cost_known ? toneClass(r.delta) : "text-ink-soft")
                     }
                   >
-                    {r.delta != null ? (
+                    {plSplit(r) ? (
+                      <SplitPL row={r} base={data.base_currency} />
+                    ) : r.delta != null ? (
                       <>
-                        {r.delta >= 0 ? "+" : ""}
-                        {money(data.base_currency).format(r.delta)}
+                        {/* Held together: at 390 the "+" went to a line of
+                            its own above the figure (brief AV, measured). */}
+                        <span className="whitespace-nowrap">
+                          {r.delta >= 0 ? "+" : ""}
+                          {money(data.base_currency).format(r.delta)}
+                        </span>
                         {r.delta_pct != null && (
                           <span className="ml-1 text-xs">({pctFmt.format(r.delta_pct)})</span>
                         )}
@@ -611,7 +660,9 @@ export default function Portfolio({
       <p className="max-w-[80ch] text-xs text-ink-faint">
         <em>Recorded</em> is what a position cost: the purchase price where you entered one,
         otherwise the value your last situation recorded (and then <em>Avg cost</em> says
-        "cost unknown", because that is not a price you paid). <em>Worth now</em> is the other
+        "cost unknown", because that is not a price you paid). A row bought into since that
+        situation holds both, and <em>Avg cost</em> says how much of it was paid, with its
+        P/L in two parts: on the part paid, and since the situation. <em>Worth now</em> is the other
         question: a market price where the market can give one, the last value recorded for
         the position where it cannot. <em>P/L vs recorded</em> compares the two only when a real
         quote priced the row. On a row nothing can price, the difference between the two
