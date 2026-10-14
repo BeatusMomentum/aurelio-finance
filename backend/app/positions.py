@@ -205,15 +205,29 @@ class Position:
     # rows where applying one would tax the same money twice.
     dividends_estimated: float
     # NOT `cost_basis is not None`: a blend of a recorded cost and a snapshot
-    # value is not a known cost, and claiming it is makes the P/L lie.
+    # value is not a known cost, and claiming it is makes the P/L lie. True
+    # when ALL of the book is money paid, which `book_paid` says in figures.
     cost_known: bool
-    # True when any unit behind that cost was not priced off a contract note:
-    # a photographed cost DERIVED from a broker's reported % return, or a buy
-    # still marked estimated, which is a plan's buy at the market close until
-    # the reader corrects it (`replay` carries it). It said "every unit came
-    # from a recorded fill" of every position born in the ledger, PAC buys
-    # included, until brief AI.
+    # True when any unit behind the PAID part of that cost was not priced off a
+    # contract note: a photographed cost DERIVED from a broker's reported %
+    # return, or a buy still marked estimated, which is a plan's buy at the
+    # market close until the reader corrects it (`replay` carries it). It said
+    # "every unit came from a recorded fill" of every position born in the
+    # ledger, PAC buys included, until brief AI; and it was false on a blend
+    # whatever its buys were, until brief AV.
     cost_estimated: bool
+    # Of `book_value`, the money PAID: a buy's cash, or a cost recorded on the
+    # photograph. The rest of the book is a photograph's value that no cost was
+    # recorded for. One row mixes the two as soon as a plan or a buy adds to a
+    # position photographed without its cost, which used to make the whole row
+    # "cost unknown" (brief AV, measured: 300.00 of 1,300.00 paid, the row said
+    # it knew none of it). Equal to `book_value` when `cost_known`.
+    book_paid: float
+    # The units that money paid for, of `quantity`: a buy's own units, and a
+    # photograph's whose cost is recorded. They keep their own average price,
+    # so the part of a P/L that is a gain is the one on the units actually
+    # bought (`replay`). None on a row with no units.
+    units_paid: float | None
     # The date this position was last CONFIRMED — the photo it sits in, or its
     # most recent ledger entry if it never appeared in one. Two different
     # things age here and calling both "stale" hides the difference: on a
@@ -276,6 +290,10 @@ class PositionState:
     # still marked estimated, or an opening the caller said was. Cleared when
     # the walk empties the position, since no unit is left behind it.
     cost_estimated: bool = False
+    # The paid pool (brief AV): of `book`, the money paid, and the units it
+    # paid for. See `replay` for how each kind of entry moves it.
+    paid: float = 0.0
+    paid_units: float = 0.0
 
 
 # --- The projection ---------------------------------------------------------
@@ -287,6 +305,8 @@ def replay(
     start_qty: float = 0.0,
     start_book: float = 0.0,
     start_estimated: bool = False,
+    start_paid: float | None = None,
+    start_paid_units: float | None = None,
     until: str | None = None,
     amount_of: Callable[[models.Transaction], float] | None = None,
 ) -> PositionState:
@@ -316,12 +336,26 @@ def replay(
     others cost: an average over them is no contract note's figure. A walk
     that empties the position clears it.
 
+    `start_paid` and `start_paid_units` say how much of the opening was money
+    paid, and for how many of its units (brief AV): the PAID POOL. Left out,
+    the opening is taken as paid, as every caller but the projection's
+    photographed rows means it. A buy adds its cash and its units to the pool;
+    a sell of u units from qty takes u/qty of the pool's units and of its
+    money, which is the money the book loses in proportion, so the book stays
+    average cost and the pool keeps its own average price; a close empties it;
+    a dividend does not touch it. What the pool holds is what was bought, at
+    what it cost: on a fund photographed at 195 with no cost and 4 units bought
+    since at 191.50, a price of 200 is +34.00 on the 4 and a movement of +30.00
+    on the 6, where a share of the money would have said +25.32 and +38.68.
+
     `amount_of` is how an entry's cash figure enters the book: the stored
     `amount` when left out, which is right only for a caller that reads units
     alone (the dividend path). An amount is in its entry's own `currency`, and
     a book adds entries together, so a caller that reads money passes the
     conversion — the projection passes its converter."""
     qty, book = start_qty, start_book
+    paid = start_book if start_paid is None else start_paid
+    paid_units = start_qty if start_paid_units is None else start_paid_units
     realized = dividends = dividends_estimated = 0.0
     estimated = start_estimated
     for t in sorted(entries, key=lambda t: (t.date, t.id)):
@@ -331,6 +365,11 @@ def replay(
         if t.kind == "sell":
             avg = (book / qty) if qty > 0 else 0.0
             sold = min(t.quantity, max(qty, 0.0))
+            if qty > 0:
+                # The same expression as the book's, so a pool that is the
+                # whole book stays exactly the whole book.
+                paid -= sold * (paid / qty)
+                paid_units -= sold * (paid_units / qty)
             book -= sold * avg
             qty = max(qty - t.quantity, 0.0)
             realized += cash - sold * avg
@@ -340,7 +379,7 @@ def replay(
             # Everything goes at once. There are no units to price against an
             # average, so the basis is the entire book the entries built.
             realized += cash - book
-            qty = book = 0.0
+            qty = book = paid = paid_units = 0.0
             estimated = False
         elif t.kind == "dividend":
             dividends += cash
@@ -354,9 +393,13 @@ def replay(
         else:  # buy
             qty += t.quantity
             book += cash
+            paid += cash
+            paid_units += t.quantity
             if t.estimated:
                 estimated = True
-    return PositionState(qty, book, realized, dividends, dividends_estimated, estimated)
+    return PositionState(
+        qty, book, realized, dividends, dividends_estimated, estimated, paid, paid_units
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -521,6 +564,16 @@ def project(
             cost_known = cost_known_from_photo
             cost_estimated = bool(h.cost_estimated) if cost_known_from_photo else False
             closed_on: str | None = None
+            # What of that book was PAID, and for how many units (brief AV):
+            # all of it where a cost is recorded, none where the book is a
+            # photograph's value. A photograph that recorded no value and no
+            # cost puts its units in the paid pool at zero, which is how they
+            # have always been read (as costing nothing, and cost_known once a
+            # buy joins them): kept as it was, and filed under STILL OPEN.
+            if recorded_cost is not None or from_photo == 0:
+                paid, units_paid = recorded_cost or 0.0, h.quantity
+            else:
+                paid, units_paid = 0.0, (None if h.quantity is None else 0.0)
 
             closed = _closure(inst_id, h, snap.date)
             if closed is not None:
@@ -532,6 +585,7 @@ def project(
                     else from_photo
                 )
                 quantity, book, observed = 0.0, 0.0, 0.0
+                paid, units_paid = 0.0, 0.0
                 realized = (cash(closed) - opening) if h.cost_basis is not None else 0.0
                 cost_known = h.cost_basis is not None
                 closed_on = closed.date
@@ -552,9 +606,12 @@ def project(
                     start_qty=h.quantity,
                     start_book=opening,
                     start_estimated=recorded is not None and bool(h.cost_estimated),
+                    start_paid=paid,
+                    start_paid_units=units_paid,
                     amount_of=cash,
                 )
                 quantity, book = walked.quantity, walked.book
+                paid, units_paid = walked.paid, walked.paid_units
                 realized, dividends = walked.realized_pl, walked.dividends
                 dividends_estimated = walked.dividends_estimated
                 # The same walk, opened at what the photograph SAID instead of
@@ -589,11 +646,13 @@ def project(
                 cost_known = recorded is not None or (
                     from_photo == 0 and any(t.kind == "buy" for t in later)
                 )
-                # And estimated when any unit behind that cost is: the
+                # And estimated when any unit behind the part PAID is: the
                 # photograph's derived cost, or a plan's buy at the close on
                 # top of it. It read the photograph alone, so a recorded cost
-                # with plan buys added claimed a contract note for all of it.
-                cost_estimated = cost_known and walked.cost_estimated
+                # with plan buys added claimed a contract note for all of it;
+                # and it asked `cost_known` first, so a photograph with plan
+                # buys on top said nothing of theirs (brief AV).
+                cost_estimated = walked.cost_estimated
 
             out.append(
                 Position(
@@ -612,6 +671,8 @@ def project(
                     dividends_estimated=dividends_estimated,
                     cost_known=cost_known,
                     cost_estimated=cost_estimated,
+                    book_paid=paid,
+                    units_paid=units_paid,
                     observed_on=snap.date,
                     closed_on=closed_on,
                     currency_note=(
@@ -681,6 +742,9 @@ def project(
                 # priced at the market close and marked estimated: the cost
                 # is estimated while one of those is behind the units held.
                 cost_estimated=walked.cost_estimated,
+                # All of it paid, by construction: nothing was photographed.
+                book_paid=walked.paid,
+                units_paid=walked.paid_units,
                 # Born from the ledger: its quantity was last confirmed by its
                 # most recent entry, not by any photograph.
                 observed_on=latest.date,

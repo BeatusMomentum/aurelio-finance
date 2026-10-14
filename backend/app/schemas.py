@@ -933,19 +933,36 @@ class PortfolioRow(BaseModel):
     cost_known: bool = Field(
         default=False,
         description=(
-            "False when the book comes from a snapshot with no recorded "
-            "purchase: the 'average cost' is then a photograph's price, not "
-            "money you paid, and 'P/L vs recorded' measures movement since you "
-            "wrote it down."
+            "True when ALL of the book is money paid. False when some or all of "
+            "it is a snapshot's value with no recorded purchase: `book_paid` "
+            "says how much was paid, and only the P/L on the units paid for "
+            "(`delta_paid`) is a gain; the rest measures movement since the "
+            "value was written down."
         ),
     )
     cost_estimated: bool = Field(
         default=False,
         description=(
-            "True when that recorded cost was DERIVED (e.g. from a broker's "
-            "reported % return) rather than read off a contract note. A real "
-            "number, but not a verified one, and the reader is entitled to know "
-            "which."
+            "True when some of the PAID part was not read off a contract note: "
+            "a plan's buy priced at a market close, or a recorded cost DERIVED "
+            "(e.g. from a broker's reported % return). A real number, but not a "
+            "verified one, and the reader is entitled to know which."
+        ),
+    )
+    book_paid: float = Field(
+        ...,
+        description=(
+            "Of book_value, the money PAID, in the base currency: a buy's cash, "
+            "or a cost recorded on the situation. The rest of the book is a "
+            "situation's value that no purchase price was recorded for. Equal "
+            "to book_value when cost_known."
+        ),
+    )
+    units_paid: float | None = Field(
+        ...,
+        description=(
+            "Of quantity, the units that money paid for: a buy's own, and a "
+            "situation's whose cost is recorded. Null on a row with no units."
         ),
     )
     observed_on: str | None = Field(
@@ -1017,6 +1034,16 @@ class PortfolioRow(BaseModel):
     delta_pct: float | None = Field(
         ..., description="delta / book_value — a return measured against cost"
     )
+    delta_paid: float | None = Field(
+        ...,
+        description=(
+            "The part of `delta` on the units paid for: their share of "
+            "market_value less book_paid, a gain or a loss against a price "
+            "paid. `delta` less this is movement since a situation, not a "
+            "profit. Equal to delta when cost_known, 0.0 when nothing was paid, "
+            "null when delta is."
+        ),
+    )
 
 
 class Portfolio(BaseModel):
@@ -1031,6 +1058,13 @@ class Portfolio(BaseModel):
 
     rows: list[PortfolioRow]
     total_book: float = Field(..., description="Sum of what the positions COST")
+    total_book_paid: float = Field(
+        ...,
+        description=(
+            "Of total_book, the money paid: the rest is situations' values that "
+            "no purchase price was recorded for (see PortfolioRow.book_paid)."
+        ),
+    )
     total_market: float | None = Field(
         ...,
         description=(

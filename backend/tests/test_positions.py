@@ -38,6 +38,8 @@ def _position(**over) -> positions.Position:
         dividends_estimated=0.0,
         cost_known=False,
         cost_estimated=False,
+        book_paid=0.0,
+        units_paid=None,
         observed_on=TODAY,
         closed_on=None,
         currency_note=None,

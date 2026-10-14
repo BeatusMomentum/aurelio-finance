@@ -241,10 +241,12 @@ def build_server(db_path: str | os.PathLike[str] | None = None) -> MCPServer:
             "ticker, no quantity or no quote — and then `current_value` falls "
             "back to the last observed value and the WHOLE row is as old as "
             "`observed_on`; where it is present, only the quantity is that "
-            "old and the value is today's. `cost_known` is false when the "
-            "cost is a photograph's value rather than a price anybody paid, "
-            "and a profit computed from it is invented. Use for questions "
-            "about a specific holding, a gain, or what is stale."
+            "old and the value is today's. `book_paid` is how much of "
+            "`book_value` is money paid, for `units_paid` of the units; "
+            "`cost_known` is true only when all of it is. The rest of the "
+            "book is a photograph's value rather than a price anybody paid, "
+            "and a profit computed from that part is invented. Use for "
+            "questions about a specific holding, a gain, or what is stale."
         ),
     )
     def get_positions() -> dict[str, Any]:
@@ -279,6 +281,8 @@ def build_server(db_path: str | os.PathLike[str] | None = None) -> MCPServer:
                         "book_value": p.book_value,
                         "cost_known": p.cost_known,
                         "cost_estimated": p.cost_estimated,
+                        "book_paid": p.book_paid,
+                        "units_paid": p.units_paid,
                         "observed_value": p.observed_value,
                         "market_value": p.market_value,
                         "current_value": p.current_value,
@@ -296,9 +300,11 @@ def build_server(db_path: str | os.PathLike[str] | None = None) -> MCPServer:
                     "needed converting. A position whose `market_value` is "
                     "null could not be priced, so every part of it is as of "
                     "`observed_on` and only the reader can refresh it. Where "
-                    "`cost_known` is false, `book_value` is what a photograph "
-                    "said the row was worth and not a price paid: do not "
-                    "subtract it from a value and call the difference a gain."
+                    "`cost_known` is false, only `book_paid` of `book_value` "
+                    "is a price paid, for `units_paid` units; the rest is what "
+                    "a photograph said the row was worth. A gain is the value "
+                    "of the units paid for less `book_paid`: do not subtract "
+                    "the whole book from a value and call the difference a gain."
                 ),
             }
 

@@ -1108,6 +1108,7 @@ def compute_portfolio(db: Session, live: bool = False) -> dict:
 
     rows: list[dict] = []
     total_book = 0.0
+    total_book_paid = 0.0
     total_market = 0.0
     total_realized = 0.0
     total_dividends = 0.0
@@ -1122,10 +1123,12 @@ def compute_portfolio(db: Session, live: bool = False) -> dict:
     for p in held:
         book = p.book_value
         total_book += book
+        total_book_paid += p.book_paid
         total_realized += p.realized_pl
         total_dividends += p.dividends
         total_dividends_estimated += p.dividends_estimated
         live_price = as_of = market = delta = delta_pct = currency = None
+        delta_paid = None
         quote = (
             quotes.get(p.symbol) if (p.symbol and p.quantity is not None) else None
         )
@@ -1139,6 +1142,12 @@ def compute_portfolio(db: Session, live: bool = False) -> dict:
                 live_price, as_of = quote["price"], quote["as_of"]
                 delta = market - book
                 delta_pct = (delta / book) if book else None
+                # The part of that P/L on the units paid for (brief AV): their
+                # share of the market value, less what they cost. The rest is
+                # movement since a situation, not a profit. The whole P/L on a
+                # row all paid; nothing on a row with nothing paid.
+                if p.quantity and p.units_paid is not None:
+                    delta_paid = market * (p.units_paid / p.quantity) - p.book_paid
                 as_of_dates.append(as_of)
             else:
                 currency = None  # unpriced row: show nothing, not half-data
@@ -1183,6 +1192,8 @@ def compute_portfolio(db: Session, live: bool = False) -> dict:
                 "avg_cost": (book / qty) if qty else None,
                 "cost_known": p.cost_known,
                 "cost_estimated": p.cost_estimated,
+                "book_paid": p.book_paid,
+                "units_paid": p.units_paid,
                 "observed_on": p.observed_on,
                 "closed_on": p.closed_on,
                 # On a priced row only the QUANTITY is this old; the value is
@@ -1198,6 +1209,7 @@ def compute_portfolio(db: Session, live: bool = False) -> dict:
                 "market_value": market,
                 "delta": delta,
                 "delta_pct": delta_pct,
+                "delta_paid": delta_paid,
             }
         )
     any_priced = bool(as_of_dates)
@@ -1205,6 +1217,9 @@ def compute_portfolio(db: Session, live: bool = False) -> dict:
     return {
         "rows": rows,
         "total_book": total_book,
+        # Of that book, the money paid (brief AV): the rest is situations'
+        # values that no purchase price was recorded for.
+        "total_book_paid": total_book_paid,
         "total_market": total_market if any_priced else None,
         "priced": any_priced,
         # The OLDEST close date among priced rows: "prices at least as of ...".

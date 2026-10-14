@@ -3955,6 +3955,11 @@ export interface components {
              * @description Sum of what the positions COST
              */
             total_book: number;
+            /**
+             * Total Book Paid
+             * @description Of total_book, the money paid: the rest is situations' values that no purchase price was recorded for (see PortfolioRow.book_paid).
+             */
+            total_book_paid: number;
             /** Total Dividends */
             total_dividends: number;
             /**
@@ -4068,6 +4073,11 @@ export interface components {
              */
             avg_cost: number | null;
             /**
+             * Book Paid
+             * @description Of book_value, the money PAID, in the base currency: a buy's cash, or a cost recorded on the situation. The rest of the book is a situation's value that no purchase price was recorded for. Equal to book_value when cost_known.
+             */
+            book_paid: number;
+            /**
              * Book Value
              * @description What this position COST, in the base currency: the recorded purchase price on a quantity-based holding where there is one, otherwise the value its photograph was taken at (and then cost_known is False, which is how a reader tells the two apart). A value-only lump keeps its photograph's figure here even when a cost was recorded against it — the projection has no units to merge a cost into, and the row says cost_known False rather than claim one. The base the P/L is measured against; never an answer to 'what is it worth'.
              */
@@ -4079,13 +4089,13 @@ export interface components {
             closed_on: string | null;
             /**
              * Cost Estimated
-             * @description True when that recorded cost was DERIVED (e.g. from a broker's reported % return) rather than read off a contract note. A real number, but not a verified one, and the reader is entitled to know which.
+             * @description True when some of the PAID part was not read off a contract note: a plan's buy priced at a market close, or a recorded cost DERIVED (e.g. from a broker's reported % return). A real number, but not a verified one, and the reader is entitled to know which.
              * @default false
              */
             cost_estimated: boolean;
             /**
              * Cost Known
-             * @description False when the book comes from a snapshot with no recorded purchase: the 'average cost' is then a photograph's price, not money you paid, and 'P/L vs recorded' measures movement since you wrote it down.
+             * @description True when ALL of the book is money paid. False when some or all of it is a snapshot's value with no recorded purchase: `book_paid` says how much was paid, and only the P/L on the units paid for (`delta_paid`) is a gain; the rest measures movement since the value was written down.
              * @default false
              */
             cost_known: boolean;
@@ -4104,6 +4114,11 @@ export interface components {
              * @description market_value − book_value: what the market says today against what was paid. NULL when no quote priced the row — a photograph's own figure is not a price the market made, and putting the difference here would present a month-old statement as performance in the column that means 'a live market versus what you paid' on every other row. The movement is still visible: it is observed_value − book_value, from two named facts.
              */
             delta: number | null;
+            /**
+             * Delta Paid
+             * @description The part of `delta` on the units paid for: their share of market_value less book_paid, a gain or a loss against a price paid. `delta` less this is movement since a situation, not a profit. Equal to delta when cost_known, 0.0 when nothing was paid, null when delta is.
+             */
+            delta_paid: number | null;
             /**
              * Delta Pct
              * @description delta / book_value — a return measured against cost
@@ -4164,6 +4179,11 @@ export interface components {
             realized_pl: number;
             /** Symbol */
             symbol: string | null;
+            /**
+             * Units Paid
+             * @description Of quantity, the units that money paid for: a buy's own, and a situation's whose cost is recorded. Null on a row with no units.
+             */
+            units_paid: number | null;
         };
         /**
          * PrefilledSnapshotRead
