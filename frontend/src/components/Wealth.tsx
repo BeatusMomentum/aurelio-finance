@@ -23,7 +23,7 @@ import {
   type Holding,
   type HoldingCreate,
 } from "../api/holdings";
-import { getListingCurrencies, getQuote, refreshHoldingPrice } from "../api/prices";
+import { getListingCurrencies, getQuote, refreshHoldingPrice, type PriceQuote } from "../api/prices";
 import { getPortfolio, type PortfolioRow } from "../api/portfolio";
 import type { ArrivedPosition, OmittedPosition } from "../api/dashboard";
 import { OmissionsNotice } from "./OmissionsNotice";
@@ -63,6 +63,7 @@ import { GONE, reread } from "./reopen";
 import { dayCount, daysAgo } from "./calendarDays";
 import { closeTooFar } from "./closeGap";
 import { dividendWord } from "./dividendLine";
+import { priceDay } from "./priceDay";
 
 // The occasional, destructive twin of a primary action: same size, same
 // shape, warning colour. `btnClass` is for the action you take every time;
@@ -996,6 +997,9 @@ function BucketSection({
   const [learned, setLearned] = useState<Record<string, string>>({});
   const [refreshingId, setRefreshingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The day this situation's prices are asked for: its own, when it is a past
+  // one (priceDay.ts); null on today's, which asks the latest close.
+  const day = priceDay(snapshotDate, todayISO());
 
   const currency =
     currencyChoice ??
@@ -1120,11 +1124,26 @@ function BucketSection({
   // never clobbers a price you typed by hand. Soft check — failure never blocks
   // saving (you may be offline, or holding an instrument we can't price).
 
+  // The close of a past situation's day, or null when none came back. Asked
+  // after the latest quote has named the instrument, so its failure is said in
+  // its own words: the symbol has just been confirmed, and "no market match"
+  // would send the reader to correct a ticker that is right.
+  async function closeOn(confirmed: string, on: string): Promise<PriceQuote | null> {
+    try {
+      return await getQuote(confirmed, on);
+    } catch (err) {
+      setError(apiError(err, `No close of ${on} came back for ${confirmed}.`));
+      return null;
+    }
+  }
+
   // Turn an observed VALUE into units, so a hand-maintained row becomes one
   // that prices itself. The guard is the whole point: this is only arithmetic
   // when the value and the price describe the same day. Dividing June's value
   // by today's price invents a quantity that never existed — which is exactly
-  // the "implied quantity" that has no business in this app.
+  // the "implied quantity" that has no business in this app. So a past
+  // situation divides by the close of its own day, and the guard is left for
+  // a day the market gave no close near.
   async function deriveQuantity() {
     if (!symbol.trim() || !value) return;
     setFetchingPrice(true);
@@ -1132,24 +1151,26 @@ function BucketSection({
     setError(null);
     try {
       const q = await getQuote(symbol.trim());
-      if (closeTooFar(snapshotDate, q.as_of)) {
+      const close = day ? await closeOn(q.symbol, day) : q;
+      if (close === null) return;
+      if (closeTooFar(snapshotDate, close.as_of)) {
         setError(
-          `This situation is dated ${snapshotDate} but the price is from ${q.as_of}. ` +
+          `This situation is dated ${snapshotDate} but the price is from ${close.as_of}. ` +
             "Dividing one by the other would invent a quantity you never held. " +
             "Enter the units from your broker instead.",
         );
         return;
       }
-      const units = Number(value) / q.price;
+      const units = Number(value) / close.price;
       if (q.symbol && q.symbol !== symbol.trim()) setSymbol(q.symbol);
       setMode("qty");
       setQuantity(String(Number(units.toFixed(8))));
-      setUnitPrice(String(q.price));
+      setUnitPrice(String(close.price));
       const listed = q.currency;
       if (listed) setLearned((prev) => ({ ...prev, [q.symbol]: listed }));
       setPriceNote(
-        `${value} ÷ ${q.price} = ${units.toFixed(8)} units of ${q.name ?? q.symbol} ` +
-          `(close of ${q.as_of}). Derived, so check it against your broker.`,
+        `${value} ÷ ${close.price} = ${units.toFixed(8)} units of ${q.name ?? q.symbol} ` +
+          `(close of ${close.as_of}). Derived, so check it against your broker.`,
       );
     } catch (err) {
       setError(apiError(err, "Could not price that ticker, so the units cannot be worked out."));
@@ -1165,8 +1186,9 @@ function BucketSection({
     setError(null);
     try {
       const typed = symbol.trim();
+      // The latest quote names the instrument and its listing currency, on a
+      // situation of any day: a dated close comes back with neither.
       const q = await getQuote(typed);
-      if (mode === "qty" && (force || !unitPrice)) setUnitPrice(String(q.price));
       const listed = q.currency; // remember the listing currency
       if (listed) setLearned((prev) => ({ ...prev, [q.symbol]: listed }));
       // "Bitcoin" prices fine but is not a symbol — a coin has no price until
@@ -1174,13 +1196,18 @@ function BucketSection({
       // that back so the stored symbol is the one that will price tomorrow.
       const resolved = q.symbol && q.symbol !== typed ? q.symbol : null;
       if (resolved) setSymbol(resolved);
+      // The price is the situation's own day's: today's close on today's
+      // situation, that day's close on a past one.
+      const close = day ? await closeOn(q.symbol, day) : q;
+      if (close === null) return;
+      if (mode === "qty" && (force || !unitPrice)) setUnitPrice(String(close.price));
       // Lead with the instrument, not the number: a wrong ticker still
       // returns a believable price, so the name is the only thing that can
       // tell you it is the wrong fund.
       setPriceNote(
-        `✓ ${q.name ?? q.symbol}${resolved ? ` → ${resolved}` : ""}: ${q.price} ${
+        `✓ ${q.name ?? q.symbol}${resolved ? ` → ${resolved}` : ""}: ${close.price} ${
           q.currency ?? ""
-        } (last close ${q.as_of})`,
+        } (${day ? "close of" : "last close"} ${close.as_of})`,
       );
     } catch (err) {
       setPriceNote(null);
@@ -1351,10 +1378,14 @@ function BucketSection({
               type="button"
               onClick={() => fetchPrice(true)}
               disabled={fetchingPrice || !symbol.trim()}
-              title="Fetch the latest market price for this ticker"
+              title={
+                day
+                  ? `Fetch this ticker's close of ${day}, the day this situation describes`
+                  : "Fetch the latest market price for this ticker"
+              }
               className="rounded-sm border border-rule px-2 py-2 text-xs text-ink-soft transition hover:border-up hover:text-up disabled:opacity-50"
             >
-              {fetchingPrice ? "…" : "↻ live"}
+              {fetchingPrice ? "…" : day ? `↻ close of ${day}` : "↻ live"}
             </button>
             {computed != null && (
               <span className="text-xs text-ink-soft">= {money(currency).format(computed)}</span>
@@ -1389,7 +1420,11 @@ function BucketSection({
               key={h.id}
               onEdit={() => startEdit(h)}
               onDelete={() => remove(h)}
-              onRefresh={h.symbol ? () => refreshRow(h) : undefined}
+              // Today's situation only. The ↻ stores the latest close as the
+              // row's price and leaves its value as recorded (measured, brief
+              // AU), so on a past situation it put a later day's close beside
+              // that day's value.
+              onRefresh={h.symbol && !day ? () => refreshRow(h) : undefined}
               refreshing={refreshingId === h.id}
               title={h.asset_name}
               subtitle={holdingSubtitle(h)}
