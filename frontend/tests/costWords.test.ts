@@ -1,47 +1,32 @@
-/* Where a position's cost came from, in the Portfolio table's titles
-   (brief AI).
+/* What the Portfolio table's "est.", "cost unknown" and "since situation"
+   mean, said behind its "?" (brief AU; the words were the cells' tooltips).
 
    A cost is estimated when any unit behind it is: a photographed cost derived
-   from a reported return, or a plan's buy at the market close. The titles
-   named the first source only, so a position bought by a PAC would have said
-   its price was derived from a reported return. Every expected value is
+   from a reported return, or a plan's buy at the market close. The words
+   named the first source only until brief AI, so a position bought by a PAC
+   said its price was derived from a reported return. Every expected value is
    written here. */
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { avgCostTitle, plTitle } from "../src/components/costWords.ts";
+import { COST_WORDS } from "../src/components/costWords.ts";
 
-const ESTIMATED = { cost_known: true, cost_estimated: true };
-const PAID = { cost_known: true, cost_estimated: false };
-const UNKNOWN = { cost_known: false, cost_estimated: false };
+test("the question names the three marks the cells carry", () => {
+  assert.equal(COST_WORDS.question, "What do est., cost unknown and since situation mean?");
+});
 
-test("an estimated average price names both of its sources", () => {
-  assert.equal(
-    avgCostTitle(ESTIMATED),
-    "Average price paid, ESTIMATED in part: some or all of it is a plan's buy priced at a market close, or a cost derived from a reported return, not a contract note",
+test("an estimated price names both of its sources, and what that does to its P/L", () => {
+  assert.ok(
+    COST_WORDS.text.startsWith(
+      "est.: the price paid is estimated in part. Some or all of it is a plan's buy priced at a market close, or a cost derived from a reported return, not a contract note, so the P/L against it is real but not verified.",
+    ),
   );
 });
 
-test("a profit or loss on an estimated price says so, and names both sources", () => {
-  assert.equal(
-    plTitle(ESTIMATED),
-    "Profit or loss against a purchase price ESTIMATED in part (a plan's buy at a market close, or a cost derived from a reported return): real, but not verified against a contract note",
+test("an unknown cost: the recorded value is the situation's, and the P/L a movement, not a profit", () => {
+  assert.ok(
+    COST_WORDS.text.endsWith(
+      " Cost unknown: no purchase price is on record. Recorded is then the value the situation was recorded at, not what you paid, and the P/L under it, marked since situation, is the movement since that situation, not a profit.",
+    ),
   );
-});
-
-test("a price paid and a price unknown read as they did", () => {
-  assert.equal(avgCostTitle(PAID), "Average price actually paid, from recorded purchases");
-  assert.equal(plTitle(PAID), "Profit or loss against the average price you paid");
-  assert.equal(
-    avgCostTitle(UNKNOWN),
-    "No purchase price on record: this is the price the situation was recorded at, not what you paid",
-  );
-  assert.equal(
-    plTitle(UNKNOWN),
-    "Movement since the situation was recorded, NOT profit: no purchase price is on record",
-  );
-});
-
-test("a cost nobody recorded is unknown, whatever the estimate flag says", () => {
-  assert.equal(avgCostTitle({ cost_known: false, cost_estimated: true }), avgCostTitle(UNKNOWN));
 });

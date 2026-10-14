@@ -42,25 +42,12 @@ const ROLE_LABEL: Record<string, string> = {
    nothing about the mandate, which is a different fact from a run whose
    confidant looked and found nothing to argue with. Folding the first into the
    second would let a formatting slip read as agreement — and agreement is
-   precisely what the count below is watching for. */
-const CHALLENGE: Record<string, { label: string; tone: string; title: string }> = {
-  contested: {
-    label: "contested",
-    tone: "text-olive",
-    title:
-      "The confidant said it was challenging something that mattered, so the analyst was made to answer it",
-  },
-  fits: {
-    label: "not contested",
-    tone: "text-ink-faint",
-    title: "The confidant read the findings and said they fit this person",
-  },
-  unstated: {
-    label: "no verdict",
-    tone: "text-warn",
-    title:
-      "That run ended on no verdict line, so it says nothing either way and is counted neither way",
-  },
+   precisely what the count below is watching for. What each word counts is
+   said once, in the sentence above the list. */
+const CHALLENGE: Record<string, { label: string; tone: string }> = {
+  contested: { label: "contested", tone: "text-olive" },
+  fits: { label: "not contested", tone: "text-ink-faint" },
+  unstated: { label: "no verdict", tone: "text-warn" },
 };
 
 function StepBlock({ step }: { step: ChainStep }) {
@@ -220,7 +207,7 @@ function RunList({ onOpen, onClose }: { onOpen: (id: number) => void; onClose: (
                   {r.revisions > 0 &&
                     ` · the analyst answered ${r.revisions} time${r.revisions > 1 ? "s" : ""}`}
                 </span>
-                <span className={"ml-auto shrink-0 text-xs " + c.tone} title={c.title}>
+                <span className={"ml-auto shrink-0 text-xs " + c.tone}>
                   {c.label}
                 </span>
                 <span aria-hidden="true" className="shrink-0 text-ink-faint">

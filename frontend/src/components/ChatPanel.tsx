@@ -26,7 +26,7 @@ import {
   type ChatModels,
   type ChatStepEvent,
 } from "../api/chat";
-import { Spinner, apiError, locale, mdComponents } from "./ui";
+import { Explainer, Spinner, apiError, locale, mdComponents, type Explain } from "./ui";
 import {
   FOLLOWING,
   onContent,
@@ -498,12 +498,7 @@ function Bubble({
           {textOf(m)}
         </div>
         {where && (
-          <p
-            className="mt-1 text-right text-xs text-ink-faint"
-            title="The page you were on when you asked: what the chat was told 'this' and 'here' point at"
-          >
-            asked on {where.label}
-          </p>
+          <p className="mt-1 text-right text-xs text-ink-faint">asked on {where.label}</p>
         )}
       </div>
     );
@@ -562,6 +557,11 @@ function Bubble({
 
 /* Small outline glyphs, drawn inline like the mark: no icon font, they inherit
    the ink, and they stay hairline-thin like the rest of the chrome. */
+/** A model's name without its provider, as the select and the "?" say it. */
+function modelName(slug: string): string {
+  return slug.includes("/") ? slug.slice(slug.indexOf("/") + 1) : slug;
+}
+
 function ClockIcon() {
   return (
     <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" focusable="false">
@@ -946,7 +946,17 @@ export default function ChatPanel({
   }
 
   const currentModel = model ?? models?.default ?? "";
-  const currentNote = models?.models.find((m) => m.slug === currentModel)?.note ?? undefined;
+  // What the panel's "?" says, read once: what a question is sent with, the
+  // keys, and what is known of each model. The select's tooltip used to say it
+  // of the current model alone, to a pointer only (brief AU).
+  const help: Explain = {
+    question: "How does the chat work?",
+    text:
+      "Each question is sent with the page you were on, said under it as “asked on”: that is what “this” and “here” point at. Enter sends; Shift+Enter starts a new line." +
+      (models
+        ? " The models: " + models.models.map((m) => `${modelName(m.slug)}, ${m.note}`).join("; ") + "."
+        : ""),
+  };
 
   // The width is written once and applied to BOTH the animated outer shell and
   // the inner column, so while the shell slides the text inside is revealed
@@ -980,12 +990,12 @@ export default function ChatPanel({
             button is the panel's only open/close control. */}
         <div className="flex items-center gap-2 border-b border-rule px-4 py-3">
           <span className="font-display text-lg leading-none text-ink">Ask Aurelio</span>
+          <Explainer {...help} />
           <button
             type="button"
             onClick={view === "history" ? () => setView("chat") : openHistory}
             aria-label={view === "history" ? "Back to the conversation" : "Past conversations"}
             aria-pressed={view === "history"}
-            title={view === "history" ? "Back to the conversation" : "Past conversations"}
             className={
               "ml-auto rounded-sm p-1.5 transition " +
               (view === "history"
@@ -1065,7 +1075,6 @@ export default function ChatPanel({
                       type="button"
                       onClick={() => void forget(c)}
                       aria-label="Delete this conversation"
-                      title="Delete this conversation"
                       className="shrink-0 cursor-pointer px-2 py-2 text-ink-faint transition hover:text-down"
                     >
                       ✕
@@ -1141,25 +1150,23 @@ export default function ChatPanel({
                 onClick={startNew}
                 disabled={messages.length === 0}
                 aria-label="New conversation"
-                title="New conversation"
                 className="rounded-sm p-1.5 text-ink-soft transition hover:bg-tint hover:text-ink disabled:opacity-40 disabled:hover:bg-transparent"
               >
                 <PlusIcon />
               </button>
-              {/* The model is chosen, not assumed. Default first; the title
-                  says what is known about the current one and when. */}
+              {/* The model is chosen, not assumed. Default first; what is
+                  known about each, and when, is in the panel's "?". */}
               <select
                 value={currentModel}
                 onChange={(e) => setModel(e.target.value || null)}
                 disabled={!models}
                 aria-label="Model"
-                title={currentNote}
                 className="min-w-0 max-w-[60%] truncate rounded-full border border-hair bg-transparent px-2.5 py-1 text-xs text-ink-soft outline-none transition hover:border-rule hover:text-ink focus:border-olive"
               >
                 {models ? (
                   models.models.map((m) => (
                     <option key={m.slug} value={m.slug}>
-                      {m.slug.includes("/") ? m.slug.slice(m.slug.indexOf("/") + 1) : m.slug}
+                      {modelName(m.slug)}
                       {m.slug === models.default ? " · default" : ""}
                     </option>
                   ))
@@ -1172,7 +1179,6 @@ export default function ChatPanel({
                   type="button"
                   onClick={() => abortRef.current?.abort()}
                   aria-label="Stop the answer"
-                  title="Stop the answer"
                   className="ml-auto flex h-8 w-8 items-center justify-center rounded-full bg-ink text-ground transition hover:bg-ink-soft"
                 >
                   <StopIcon />
@@ -1182,7 +1188,6 @@ export default function ChatPanel({
                   type="submit"
                   disabled={!draft.trim()}
                   aria-label="Send"
-                  title="Send (Enter)"
                   className="ml-auto flex h-8 w-8 items-center justify-center rounded-full bg-olive text-white transition hover:bg-olive-deep disabled:opacity-40 disabled:hover:bg-olive"
                 >
                   <ArrowUpIcon />

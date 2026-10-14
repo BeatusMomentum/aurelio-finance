@@ -159,10 +159,10 @@ function AssetsLevel({ onSelect }: { onSelect: (a: RealAsset) => void }) {
     <Section title="Real assets">
       <form onSubmit={submit} className="flex flex-wrap gap-2">
         <input className={inputClass} aria-label="Name" {...marks(REAL_ASSET, "name")} value={name} onChange={(e) => setName(e.target.value)} />
-        <select className={inputClass} value={category} onChange={(e) => setCategory(e.target.value)}>
+        <select className={inputClass} aria-label="Category" value={category} onChange={(e) => setCategory(e.target.value)}>
           {CATEGORIES.map((c) => (<option key={c} value={c}>{c || "category…"}</option>))}
         </select>
-        <input className={inputClass + " w-24"} placeholder="currency" {...marks(REAL_ASSET, "currency")} list={CURRENCY_LIST} title="The currency the asset is valued in. Proposed from your base currency; change it and it stays as you typed it." value={currency} onChange={(e) => setCurrencyChoice(e.target.value)} />
+        <input className={inputClass + " w-24"} placeholder="currency" aria-label="Currency" {...marks(REAL_ASSET, "currency")} list={CURRENCY_LIST} value={currency} onChange={(e) => setCurrencyChoice(e.target.value)} />
         <button className={btnClass} disabled={submitting}>{submitting ? "..." : editId != null ? "Save" : "Add"}</button>
         {editId != null && <CancelButton onClick={reset} />}
       </form>

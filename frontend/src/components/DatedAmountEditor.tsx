@@ -162,8 +162,8 @@ export function DatedAmountEditor<T extends { id: number; note: string | null },
           <input
             className={inputClass + " w-20"}
             placeholder="currency"
+            aria-label="Currency"
             list={CURRENCY_LIST}
-            title="The currency this amount is in. Proposed from the anchor in force on this date; change it and it stays as you typed it."
             value={ed.draft.currency || proposedCurrency(ed.draft.date)}
             onChange={(e) => ed.set("currency")(e.target.value)}
           />

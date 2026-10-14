@@ -308,10 +308,7 @@ export function InstrumentPicker({
             // "Nothing answered" is a different claim from "this does not
             // exist", and presenting the first as the second would teach
             // someone to correct a symbol that was right all along.
-            <div
-              className="border-b border-hair px-3 py-1.5 text-[0.65rem] text-warn"
-              title="Nothing answered, which is a different claim from 'this instrument does not exist'. The catalogue lane below is local and unaffected."
-            >
+            <div className="border-b border-hair px-3 py-1.5 text-[0.65rem] text-warn">
               Live source did not answer. This says nothing about the instrument.
             </div>
           )}
@@ -351,11 +348,9 @@ export function InstrumentPicker({
                     {r.price != null && ` · ${r.price} on ${exchangeName(r.exchange)}`}
                   </span>
                   {expiring && (
-                    <span
-                      className="block text-[0.6rem] text-warn"
-                      title="A futures contract expires and rolls, so a position pinned to this symbol would measure a different contract in a few months without saying so."
-                    >
-                      ⚠ dated contract: expires and rolls
+                    <span className="block text-[0.6rem] text-warn">
+                      ⚠ dated contract: it expires and rolls, so in a few months this symbol
+                      prices a different one
                     </span>
                   )}
                 </span>

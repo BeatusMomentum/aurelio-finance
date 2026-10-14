@@ -177,7 +177,7 @@ export default function Goals() {
     >
       <form onSubmit={submit} className="space-y-3">
         <div className="flex flex-wrap gap-2">
-          <select className={inputClass} {...marks(goal(type), "type")} value={type} onChange={(e) => setType(e.target.value)}>
+          <select className={inputClass} aria-label="What the goal is for" {...marks(goal(type), "type")} value={type} onChange={(e) => setType(e.target.value)}>
             <option value="">what is this goal for?…</option>
             {GOAL_TYPES.map((t) => (
               <option key={t.value} value={t.value}>{t.label}</option>
@@ -186,6 +186,7 @@ export default function Goals() {
           <input
             className={inputClass + " min-w-64 flex-1"}
             placeholder="Detail (optional), e.g. flat in Milan"
+            aria-label={type === "other" ? "What the goal is" : "Detail"}
             {...marks(goal(type), "name")}
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -194,16 +195,16 @@ export default function Goals() {
 
         {isTarget && (
           <div className="flex flex-wrap items-center gap-2">
-            <input className={inputClass + " w-36"} type="number" step="0.01" placeholder="Target" value={targetAmount} onChange={(e) => setTargetAmount(e.target.value)} />
-            <input className={inputClass} type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} />
-            <input className={inputClass + " w-36"} type="number" step="0.01" placeholder="Current" value={currentAmount} onChange={(e) => setCurrentAmount(e.target.value)} />
-            <input className={inputClass + " w-40"} type="number" step="0.01" placeholder="Monthly contribution" value={monthly} onChange={(e) => setMonthly(e.target.value)} />
+            <input className={inputClass + " w-36"} type="number" step="0.01" placeholder="Target" aria-label="Target" value={targetAmount} onChange={(e) => setTargetAmount(e.target.value)} />
+            <input className={inputClass} type="date" aria-label="Target date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} />
+            <input className={inputClass + " w-36"} type="number" step="0.01" placeholder="Current" aria-label="What you have now" value={currentAmount} onChange={(e) => setCurrentAmount(e.target.value)} />
+            <input className={inputClass + " w-40"} type="number" step="0.01" placeholder="Monthly contribution" aria-label="Monthly contribution" value={monthly} onChange={(e) => setMonthly(e.target.value)} />
             <input
               className={inputClass + " w-20"}
               placeholder="currency"
+              aria-label="Currency"
               {...marks(goal(type), "currency")}
               list={CURRENCY_LIST}
-              title="The currency the target, what you have and the contribution are in. Proposed from your base currency; change it and it stays as you typed it."
               value={currency}
               onChange={(e) => setCurrencyChoice(e.target.value)}
             />

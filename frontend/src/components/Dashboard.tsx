@@ -162,7 +162,7 @@ function RankedBars({
           key={it.name}
           className="grid grid-cols-[7.5rem_1fr_auto] items-center gap-3 text-sm sm:grid-cols-[10rem_1fr_auto]"
         >
-          <span className="min-w-0 break-words text-ink" title={it.name}>
+          <span className="min-w-0 break-words text-ink">
             {it.name}
           </span>
           <div className="h-3 bg-tint">

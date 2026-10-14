@@ -39,7 +39,8 @@ import type { WatchlistItem } from "../api/watchlist";
 import { Row, RowsOrEmpty, Section, apiError, btnClass, cardClass, inputClass, locale, money, todayISO, CURRENCY_LIST } from "./ui";
 import { dividendWord } from "./dividendLine";
 import { ageWords } from "./calendarDays";
-import { avgCostTitle, plTitle } from "./costWords";
+import { COST_WORDS } from "./costWords";
+import { readReason } from "./lookThroughReason";
 import {
   SHOWN,
   correctingLine,
@@ -363,6 +364,7 @@ export default function Portfolio({
     <Section
       title="Portfolio"
       hint="Your investment positions (latest situation of each institution). Refresh to pull live market prices and see profit/loss vs the recorded value."
+      explain={COST_WORDS}
     >
       <div className="flex flex-wrap items-center gap-3">
         <button onClick={() => load(true)} disabled={pricing} className={btnClass}>
@@ -510,19 +512,17 @@ export default function Portfolio({
                       position. The ledger list below says the same words. */}
                   <td className="px-4 py-2.5 text-ink-soft">
                     {r.institution ?? (
-                      <span
-                        className="text-ink-faint"
-                        title="Held at no institution: no situation can photograph it and nothing can confirm it is still there. PAC targets that name no institution create these. Give the ledger row below an institution to attach it."
-                      >
-                        no institution
-                      </span>
+                      <>
+                        <span className="text-ink-faint">no institution</span>
+                        <div className="mt-0.5 text-[0.65rem] text-warn">
+                          no situation can confirm it is still there: give its ledger row
+                          below an institution
+                        </div>
+                      </>
                     )}
                   </td>
                   <td className="px-4 py-2.5 text-right text-ink-soft">{r.quantity ?? "n/a"}</td>
-                  <td
-                    className="px-4 py-2.5 text-right text-ink-soft"
-                    title={avgCostTitle(r)}
-                  >
+                  <td className="px-4 py-2.5 text-right text-ink-soft">
                     {r.avg_cost == null ? (
                       "n/a"
                     ) : r.cost_known ? (
@@ -537,10 +537,7 @@ export default function Portfolio({
                     )}
                   </td>
                   <td className="px-4 py-2.5 text-right text-ink">{money(data.base_currency).format(r.book_value)}</td>
-                  <td
-                    className="px-4 py-2.5 text-right text-ink-soft"
-                    title={r.as_of ? `Market close of ${fmtDate(r.as_of)}` : undefined}
-                  >
+                  <td className="px-4 py-2.5 text-right text-ink-soft">
                     {r.live_price == null
                       ? "unknown"
                       : r.currency && r.currency !== data.base_currency
@@ -564,11 +561,6 @@ export default function Portfolio({
                       "px-4 py-2.5 text-right font-medium " +
                       (r.market_value != null ? "text-ink" : "text-ink-soft")
                     }
-                    title={
-                      r.market_value != null
-                        ? undefined
-                        : "Nothing can price this today: the last value recorded for this position, carried forward"
-                    }
                   >
                     {money(data.base_currency).format(r.market_value ?? r.observed_value)}
                   </td>
@@ -577,7 +569,6 @@ export default function Portfolio({
                       "px-4 py-2.5 text-right font-medium " +
                       (r.cost_known ? toneClass(r.delta) : "text-ink-soft")
                     }
-                    title={plTitle(r)}
                   >
                     {r.delta != null ? (
                       <>
@@ -682,7 +673,7 @@ function AllocationList({
       <div className="space-y-2">
         {items.slice(0, 10).map((it) => (
           <div key={it.name} className="grid grid-cols-[8rem_1fr_3.5rem] items-center gap-2 text-sm">
-            <span className="min-w-0 break-words text-ink" title={it.name}>{it.name}</span>
+            <span className="min-w-0 break-words text-ink">{it.name}</span>
             <WeightBar pct={it.pct} />
             <span className="text-right tabular-nums text-ink-soft">{it.pct.toFixed(1)}%</span>
           </div>
@@ -708,6 +699,23 @@ function AllocationList({
         )}
       </div>
     </div>
+  );
+}
+
+/** Why the look-through could not open a position: its words under the
+    name, the sources' own text behind a press, never under a pointer. */
+function WhyNotInside({ reason, assetClass }: { reason: string; assetClass: string | null }) {
+  const why = readReason(reason, assetClass);
+  return (
+    <>
+      <span className="block text-xs text-ink-faint">{why.words}</span>
+      {why.detail && (
+        <details className="text-xs text-ink-faint">
+          <summary className="cursor-pointer">What each source said</summary>
+          <span className="block break-words">{why.detail}</span>
+        </details>
+      )}
+    </>
   );
 }
 
@@ -866,8 +874,14 @@ function LookThroughSection() {
                     .filter((r) => r.decomposed)
                     .map((r) => (
                       <li key={r.symbol ?? r.asset_name} className="flex justify-between gap-3">
-                        <span className="min-w-0 break-words text-ink" title={r.resolved_name ?? undefined}>
+                        {/* What the source read it as, when that is another
+                            name: the figures below are that fund's. */}
+                        <span className="min-w-0 break-words text-ink">
                           {r.asset_name}
+                          {r.resolved_name &&
+                            r.resolved_name.trim().toLowerCase() !== r.asset_name.trim().toLowerCase() && (
+                              <span className="block text-xs text-ink-faint">read as {r.resolved_name}</span>
+                            )}
                         </span>
                         <span className="shrink-0 tabular-nums text-ink-soft">
                           {r.weight_pct.toFixed(1)}%
@@ -889,9 +903,13 @@ function LookThroughSection() {
                     .filter((r) => !r.decomposed)
                     .map((r) => (
                       <li key={r.symbol ?? r.asset_name} className="flex justify-between gap-3">
-                        <span className="min-w-0 break-words text-ink-soft" title={r.error ?? undefined}>
+                        {/* Why this share of the portfolio is not looked
+                            inside: in words, in view, and what each source
+                            said one press away (lookThroughReason.ts). */}
+                        <div className="min-w-0 break-words text-ink-soft">
                           {r.asset_name}
-                        </span>
+                          {r.error && <WhyNotInside reason={r.error} assetClass={r.asset_class ?? null} />}
+                        </div>
                         <span className="shrink-0 tabular-nums text-ink-faint">
                           {r.weight_pct.toFixed(1)}%
                         </span>
@@ -1346,6 +1364,12 @@ function BuysSection({
   // Said, not refused: moved off its ex-date, a dividend the app recorded is
   // recorded again at the next start.
   const movedNote = editing ? movedOffItsDay(editing, date, fmtDate) : null;
+  // An entry is matched to its position by the exact ticker. One no position
+  // carries is right for a first buy and a typo otherwise, so it is said in
+  // view, as the PAC form says it of a plan's; it was a tooltip (brief AU).
+  const typedSymbol = symbol.trim().toUpperCase();
+  const unknownSymbol =
+    typedSymbol !== "" && !owned.some((o) => o.symbol.toUpperCase() === typedSymbol) ? typedSymbol : null;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -1433,18 +1457,18 @@ function BuysSection({
       hint="What you paid, and what came back: the only place a real profit can come from."
       note="Without a buy here, the P/L above measures movement since the last situation rather than gain. Rows marked ‘estimated’ came from market closes or gross dividends. Correct them with the real broker amounts."
       explain={{
-        question: "How are sells and dividends counted?",
-        text: "A sell removes units at average cost and books the difference; a dividend credits cash.",
+        question: "How are an entry's figures read and counted?",
+        text: "A sell removes units at average cost and books the difference; a dividend credits cash. A price is in its listing's currency: USD for a New York share, GBp (pence) for most London listings. The amount the account moved is the one on your statement; left blank, it is worked out from the quantity, the price and the fees, and across two currencies at the ECB rate of the entry's date, from which your broker's will differ a little. A close needs what came back: zero is allowed, but it has to be said, since that is the difference between selling something and forgetting it.",
       }}
     >
       <form onSubmit={submit} className="flex flex-wrap items-center gap-2">
-        <select className={inputClass} value={kind} onChange={(e) => setKind(e.target.value)}>
+        <select className={inputClass} aria-label="Kind" value={kind} onChange={(e) => setKind(e.target.value)}>
           <option value="buy">buy</option>
           <option value="sell">sell</option>
           <option value="dividend">dividend</option>
           <option value="close">close</option>
         </select>
-        <input className={inputClass} type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        <input className={inputClass} type="date" aria-label="Date" value={date} onChange={(e) => setDate(e.target.value)} />
         {/* A buy has to come from somewhere. A row with neither institution
             column set is skipped by the cash register — it keeps the entries
             belonging to the institution it is computing, and null matches no
@@ -1466,7 +1490,7 @@ function BuysSection({
           className={inputClass}
           value={institutionId}
           {...marks(needs, "institutionId")}
-          title="Where the position is held, and whose cash pays for it"
+          aria-label="Where you keep it"
           onChange={(e) => {
             if (e.target.value === ADD_INSTITUTION) {
               setAddingInstitution(true);
@@ -1515,7 +1539,7 @@ function BuysSection({
             );
           }}
         />
-        <input className={inputClass + " w-32"} placeholder="Ticker or ISIN" {...marks(needs, "symbol")} title="Yahoo ticker with exchange suffix (e.g. VWCE.MI) or the fund's ISIN. It must match the position's symbol in Wealth" value={symbol} onChange={(e) => setSymbol(e.target.value)} />
+        <input className={inputClass + " w-32"} placeholder="Ticker or ISIN" aria-label="Ticker or ISIN" {...marks(needs, "symbol")} value={symbol} onChange={(e) => setSymbol(e.target.value)} />
         <input ref={quantityRef} className={inputClass + " w-24"} type="number" step="any" min="0" aria-label="Quantity" placeholder="Qty" {...marks(needs, "quantity")} value={quantity} onChange={(e) => setQuantity(e.target.value)} />
         {!isClose && (
           <input className={inputClass + " w-28"} type="number" step="any" min="0" aria-label={kind === "dividend" ? "Dividend per share" : "Price"} {...marks(needs, "unitPrice")} value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} />
@@ -1524,9 +1548,9 @@ function BuysSection({
           <input
             className={inputClass + " w-20"}
             placeholder="currency"
+            aria-label="Currency of the price"
             {...marks(needs, "priceCurrency")}
             list={CURRENCY_LIST}
-            title="The currency the price is in: the listing's (USD for a New York share, GBp for pence in London)"
             value={priceCurrency}
             onChange={(e) => setPriceCurrencyChoice(e.target.value)}
           />
@@ -1546,25 +1570,17 @@ function BuysSection({
           step="any"
           min="0"
           placeholder={isClose ? "Proceeds" : "Fees"}
+          aria-label={isClose ? "Proceeds" : "Fees"}
           {...marks(needs, "fees")}
-          title={
-            isClose
-              ? "What came back. Zero is allowed, but it has to be said: that is the difference between selling something and forgetting it."
-              : "Broker fees and commissions"
-          }
           value={fees}
           onChange={(e) => setFees(e.target.value)}
         />
         <input
           className={inputClass + " w-20"}
           placeholder="currency"
+          aria-label={isClose ? "Currency of the proceeds" : "Currency of the account"}
           {...marks(needs, "currency")}
           list={CURRENCY_LIST}
-          title={
-            isClose
-              ? "The currency the proceeds reached the account in"
-              : "The currency of the account: what the fees and the money that moved are in"
-          }
           value={currency}
           onChange={(e) => setCurrencyChoice(e.target.value)}
         />
@@ -1594,7 +1610,7 @@ function BuysSection({
                 ? `${kind === "buy" ? "Debited" : "Credited"} in ${currency || "…"}`
                 : `${money(currency, "cents").format(derived)} if left blank`
             }
-            title="What the account actually moved by, from your statement. Leave it blank and it is worked out from the quantity, the price and the fees (across two currencies, at the ECB rate of the date above, where your broker's rate will differ a little)."
+            aria-label="Amount the account moved"
             value={debit}
             onChange={(e) => setDebit(e.target.value)}
           />
@@ -1623,6 +1639,7 @@ function BuysSection({
             ref={newNameRef}
             className={inputClass}
             placeholder="Name of the bank or broker"
+            aria-label="Name of the bank or broker"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => {
@@ -1635,6 +1652,7 @@ function BuysSection({
           <input
             className={inputClass + " w-32"}
             placeholder="Type (optional)"
+            aria-label="Type"
             value={newType}
             onChange={(e) => setNewType(e.target.value)}
           />
@@ -1683,6 +1701,12 @@ function BuysSection({
       )}
       {correctingNote && <p className="mt-2 text-xs text-olive">{correctingNote}</p>}
       {movedNote && <p className="mt-2 text-xs text-warn">{movedNote}</p>}
+      {unknownSymbol && (
+        <p className="mt-2 text-xs text-warn">
+          <b>{unknownSymbol}</b> matches no position you hold: fine for a first buy, but another
+          spelling of a ticker you hold starts a second position instead of adding to it.
+        </p>
+      )}
       {/* Shown, and then allowed through. The records being behind is the case
           the reader is here to correct, so this is a fact about the records,
           not a verdict on the entry. */}

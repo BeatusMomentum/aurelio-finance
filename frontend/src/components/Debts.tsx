@@ -188,20 +188,20 @@ function DebtsLevel({ onSelect }: { onSelect: (l: Liability) => void }) {
     >
       <form onSubmit={submit} className="flex flex-wrap items-center gap-2">
         <input className={inputClass} aria-label="Name" {...marks(DEBT, "name")} value={name} onChange={(e) => setName(e.target.value)} />
-        <select className={inputClass} value={kind} onChange={(e) => setKind(e.target.value)}>
+        <select className={inputClass} aria-label="Kind" value={kind} onChange={(e) => setKind(e.target.value)}>
           {KINDS.map((k) => (<option key={k} value={k}>{prettyKind(k) || "kind…"}</option>))}
         </select>
-        <input className={inputClass + " w-28"} type="number" step="0.01" placeholder="Rate %/yr" value={rate} onChange={(e) => setRate(e.target.value)} />
+        <input className={inputClass + " w-28"} type="number" step="0.01" placeholder="Rate %/yr" aria-label="Interest rate, % a year" value={rate} onChange={(e) => setRate(e.target.value)} />
         <input
           className={inputClass + " w-20"}
           placeholder="currency"
+          aria-label="Currency"
           {...marks(DEBT, "currency")}
           list={CURRENCY_LIST}
-          title="The currency the debt is owed in. Proposed from your base currency; change it and it stays as you typed it."
           value={currency}
           onChange={(e) => setCurrencyChoice(e.target.value)}
         />
-        <select className={inputClass} value={assetId} onChange={(e) => setAssetId(e.target.value)}>
+        <select className={inputClass} aria-label="The asset it finances" value={assetId} onChange={(e) => setAssetId(e.target.value)}>
           <option value="">finances asset…</option>
           {assets.map((a) => (<option key={a.id} value={a.id}>{a.name}</option>))}
         </select>

@@ -518,8 +518,7 @@ export function Row({
           <button
             onClick={onRefresh}
             disabled={refreshing}
-            aria-label="Refresh price"
-            title="Refresh price from the market"
+            aria-label="Refresh price from the market"
             className="shrink-0 px-2 py-3 text-ink-faint transition hover:text-up disabled:opacity-50"
           >
             {refreshing ? "…" : "↻"}
@@ -529,7 +528,6 @@ export function Row({
           <button
             onClick={onEdit}
             aria-label="Edit"
-            title="Edit"
             className="shrink-0 px-2 py-3 text-ink-faint transition hover:text-olive"
           >
             ✎
@@ -539,7 +537,6 @@ export function Row({
           <button
             onClick={onDelete}
             aria-label="Delete"
-            title="Delete"
             className="shrink-0 px-3 py-3 text-ink-faint transition hover:text-down"
           >
             ✕

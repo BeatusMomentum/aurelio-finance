@@ -257,7 +257,7 @@ function InstitutionsLevel({ onSelect }: { onSelect: (i: Institution) => void })
     <Section title="Institutions">
       <form onSubmit={submit} className="flex flex-wrap gap-2">
         <input className={inputClass} aria-label="Name of the bank or broker" {...marks(INSTITUTION, "name")} value={name} onChange={(e) => setName(e.target.value)} />
-        <input className={inputClass} placeholder="Type (e.g. bank)" value={type} onChange={(e) => setType(e.target.value)} />
+        <input className={inputClass} placeholder="Type (e.g. bank)" aria-label="Type" value={type} onChange={(e) => setType(e.target.value)} />
         <button className={btnClass} disabled={submitting}>{submitting ? "..." : editId != null ? "Save" : "Add"}</button>
         {editId != null && <CancelButton onClick={reset} />}
       </form>
@@ -329,21 +329,16 @@ function InstitutionLevel({
 function Term({
   go,
   to,
-  dest,
   children,
 }: {
   go: (f: Focus) => void;
   to: Focus;
-  /** Named in the tooltip rather than implied: a link out of an explanation
-      should say where it goes before it is pressed, not after. */
-  dest: string;
   children: ReactNode;
 }) {
   return (
     <button
       type="button"
       onClick={() => go(to)}
-      title={dest}
       className="cursor-pointer rounded-sm underline decoration-1 underline-offset-2 hover:text-ink"
     >
       {children}
@@ -388,6 +383,10 @@ function CashRegister({
   return (
     <Section
       title="Cash"
+      explain={{
+        question: "How is an anchor's currency proposed?",
+        text: "As the account's own: the currency of the anchor in force on its date, and your base currency for an account with none yet. What you type stays.",
+      }}
       aside={
         // Nothing while it loads, as the investments half does: "unknown"
         // is for a position that failed to load, not one still on its way.
@@ -404,23 +403,32 @@ function CashRegister({
       {position && position.anchor_date && (
         <p className="text-xs text-ink-soft">
           From anchor {money(position.base_currency).format(position.anchor_amount)} on {position.anchor_date}:{" "}
-          <Term go={go} to="income" dest="Records → Cash flow, where income is entered">
+          <Term go={go} to="income">
             + income {money(position.base_currency).format(position.income)}
           </Term>{" "}
-          <Term go={go} to="expenses" dest="Records → Cash flow, where expenses are entered">
+          <Term go={go} to="expenses">
             − expenses {money(position.base_currency).format(position.expenses)}
           </Term>{" "}
           ·{" "}
-          <Term go={go} to="transfers" dest="Records → Cash flow, where transfers are entered">
+          <Term go={go} to="transfers">
             transfers +{money(position.base_currency).format(position.transfers_in)} / −
             {money(position.base_currency).format(position.transfers_out)}
           </Term>{" "}
-          <Term go={go} to="ledger" dest="Portfolio's ledger, where purchases are entered">
+          <Term go={go} to="ledger">
             − buys {money(position.base_currency).format(position.buys)}
           </Term>{" "}
-          <Term go={go} to="ledger" dest="Portfolio's ledger, where sales and dividends are entered">
+          <Term go={go} to="ledger">
             + sells/dividends {money(position.base_currency).format(position.sells)}
           </Term>
+        </p>
+      )}
+      {/* Where each term of the sentence is entered, said once and in view: a
+          link out of an explanation says where it goes before it is pressed.
+          It was a tooltip on each term (brief AU). */}
+      {position && position.anchor_date && (
+        <p className="text-xs text-ink-faint">
+          Income, expenses and transfers are entered in Records → Cash flow; buys, sales and
+          dividends in Portfolio's ledger. Each term opens its page.
         </p>
       )}
       {position && !position.anchor_date && anchors.length === 0 && (
@@ -757,6 +765,10 @@ They will be reported as unaccounted for, not removed in silence.
       }
       hint="Your investment positions at a date. Cash lives in the Cash section above."
       note="To update, start a new date from the previous one. Editing an old situation rewrites what that day said."
+      explain={{
+        question: "What does “Start from the last one” do?",
+        text: "It copies the positions and quantities of the latest situation to the date you picked, prices everything with a ticker at that date, and says which rows still need you.",
+      }}
     >
       {/* What this account has already failed to account for, on the page where
           the situation that did it is written. The Dashboard and the Portfolio
@@ -776,11 +788,6 @@ They will be reported as unaccounted for, not removed in silence.
           onClick={prefill}
           disabled={submitting || !date || items.length === 0 || taken !== null}
           className={btnClass}
-          title={
-            items.length === 0
-              ? "There is nothing to start from yet: this account's first situation has to be declared."
-              : "Copies the positions and quantities of the latest situation, re-prices everything with a ticker at this date, and tells you which rows still need you"
-          }
         >
           {submitting ? "..." : "Start from the last one"}
         </button>
@@ -800,11 +807,6 @@ They will be reported as unaccounted for, not removed in silence.
           onClick={createEmpty}
           className={held.length === 0 ? btnClass : dangerBtnClass}
           disabled={submitting || !date || taken !== null}
-          title={
-            held.length === 0
-              ? "Declare from scratch what this account holds at this date."
-              : `An empty situation becomes this account's authority: the ${held.length} position${held.length === 1 ? "" : "s"} recorded here leave your net worth unless you re-enter them.`
-          }
         >
           {items.length === 0 ? "Declare the first situation" : "Start empty"}
         </button>
@@ -913,12 +915,11 @@ function SituationDetail({ snapshot }: { snapshot: Snapshot }) {
           is a different act with the same gesture, and the app never told the
           two apart. Only the second is worth a warning. */}
       {isPast && (
-        <p
-          className="border-l-2 border-warn bg-warn-tint px-3 py-2 text-sm text-warn"
-          title="Editing an old situation rewrites what that day said, so the wealth chart will show today's figures as if they had been true back then, and P/L vs recorded collapses, because the photograph starts chasing the market."
-        >
+        <p className="border-l-2 border-warn bg-warn-tint px-3 py-2 text-sm text-warn">
           Situation of <b>{snapshot.date}</b>, {dayCount(ageDays)} ago: editing here rewrites
-          what that day said. For today, use “Start from the last one”.
+          what that day said. The wealth chart shows the new figures as that day's, and today's
+          figures entered here take P/L vs recorded towards zero. For today, use “Start from the
+          last one”.
         </p>
       )}
       <PositionForm

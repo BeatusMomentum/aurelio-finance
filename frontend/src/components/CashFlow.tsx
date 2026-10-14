@@ -248,7 +248,7 @@ function InstitutionSelect({
   institutions,
   placeholder = "institution…",
   required = false,
-  title,
+  label,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -261,13 +261,14 @@ function InstitutionSelect({
       that made a plan's spending add itself to the net worth. On, the box
       is also aria-required. */
   required?: boolean;
-  title?: string;
+  /** What the box is, as its accessible name. */
+  label: string;
 }) {
   return (
     <select
       className={inputClass}
       value={value}
-      title={title}
+      aria-label={label}
       aria-required={required || undefined}
       onChange={(e) => onChange(e.target.value)}
     >
@@ -438,28 +439,36 @@ function CashFlowSection<T extends CashFlowRow, P>({
   });
 
   return (
-    <Section title={spec.title} hint={spec.hint} note={FIRST_PAYMENT_NOTE}>
+    <Section
+      title={spec.title}
+      hint={spec.hint}
+      note={FIRST_PAYMENT_NOTE}
+      explain={{
+        question: `How is ${spec.noun === "income" ? "an income's" : "an expense's"} currency proposed?`,
+        text: `From the cash of the account it is ${spec.noun === "income" ? "credited to" : "paid from"}, on the first payment's date; what you type stays.`,
+      }}
+    >
       <form onSubmit={ed.submit} className="flex flex-wrap items-center gap-2">
         <input className={inputClass} aria-label="Name" {...marks(spec.needs, "name")} value={ed.draft.name} onChange={(e) => ed.set("name")(e.target.value)} />
-        <select className={inputClass} value={ed.draft.tag} onChange={(e) => ed.set("tag")(e.target.value)}>
+        <select className={inputClass} aria-label={spec.tagField === "kind" ? "Kind" : "Nature"} value={ed.draft.tag} onChange={(e) => ed.set("tag")(e.target.value)}>
           {spec.tagOptions.map((t) => (<option key={t} value={t}>{t || `${spec.tagField}…`}</option>))}
         </select>
-        <select className={inputClass} value={ed.draft.category} onChange={(e) => ed.set("category")(e.target.value)}>
+        <select className={inputClass} aria-label="Category" value={ed.draft.category} onChange={(e) => ed.set("category")(e.target.value)}>
           {spec.categories.map((c) => (<option key={c} value={c}>{c || "category…"}</option>))}
         </select>
         <input className={inputClass + " w-28"} type="number" step="0.01" aria-label="Amount" {...marks(spec.needs, "amount")} value={ed.draft.amount} onChange={(e) => ed.set("amount")(e.target.value)} />
         <input
           className={inputClass + " w-20"}
           placeholder="currency"
+          aria-label="Currency"
           list={CURRENCY_LIST}
-          title="The currency the amount is in. Proposed from the institution's cash on the first payment's date; change it and it stays as you typed it."
           value={ed.draft.currency || proposed(ed.draft)}
           onChange={(e) => ed.set("currency")(e.target.value)}
         />
-        <select className={inputClass} value={ed.draft.frequency} onChange={(e) => ed.set("frequency")(e.target.value)}>
+        <select className={inputClass} aria-label="Frequency" value={ed.draft.frequency} onChange={(e) => ed.set("frequency")(e.target.value)}>
           {FREQUENCIES.map((f) => (<option key={f} value={f}>{f || "frequency…"}</option>))}
         </select>
-        <InstitutionSelect value={ed.draft.institutionId} onChange={ed.set("institutionId")} institutions={institutions} />
+        <InstitutionSelect value={ed.draft.institutionId} onChange={ed.set("institutionId")} institutions={institutions} label="Account" />
         <DateField label={flowDateLabel(ed.draft.frequency)} value={ed.draft.startDate} onChange={ed.set("startDate")} />
         <DateField label="end" value={ed.draft.endDate} onChange={ed.set("endDate")} />
         <EditorButtons editing={ed.editing} submitting={ed.submitting} onCancel={ed.reset} />
@@ -660,15 +669,15 @@ function TransferSection({
     >
       <form onSubmit={submit} className="flex flex-wrap items-center gap-2">
         <DateField label="on" value={date} onChange={setDate} mark={marks(TRANSFER, "date")} />
-        <InstitutionSelect value={fromId} onChange={setFromId} institutions={institutions} placeholder="from (or external)…" />
+        <InstitutionSelect value={fromId} onChange={setFromId} institutions={institutions} placeholder="from (or external)…" label="From" />
         <span className="text-ink-faint">→</span>
-        <InstitutionSelect value={toId} onChange={setToId} institutions={institutions} placeholder="to (or external)…" />
+        <InstitutionSelect value={toId} onChange={setToId} institutions={institutions} placeholder="to (or external)…" label="To" />
         <input className={inputClass + " w-28"} type="number" step="0.01" aria-label="Amount" {...marks(TRANSFER, "amount")} value={amount} onChange={(e) => setAmount(e.target.value)} />
         <input
           className={inputClass + " w-20"}
           placeholder="currency"
+          aria-label="Currency that left"
           list={CURRENCY_LIST}
-          title="The currency that left the source account"
           {...marks(TRANSFER, "currency")}
           value={currency}
           onChange={(e) => setCurrencyChoice(e.target.value)}
@@ -677,8 +686,8 @@ function TransferSection({
         <input
           className={inputClass + " w-20"}
           placeholder="currency"
+          aria-label="Currency that arrived"
           list={CURRENCY_LIST}
-          title="The currency the destination account was credited in"
           {...marks(TRANSFER, "toCurrency")}
           value={toCurrency}
           onChange={(e) => setToCurrencyChoice(e.target.value)}
@@ -690,7 +699,7 @@ function TransferSection({
             step="any"
             min="0"
             placeholder={`Arrived in ${toCurrency || "…"}`}
-            title="What the destination was actually credited, from its statement. Leave it blank and it is worked out at the ECB rate of the date. Your bank's rate will differ a little."
+            aria-label="Amount that arrived"
             value={arrived}
             onChange={(e) => setArrived(e.target.value)}
           />
@@ -1077,29 +1086,29 @@ function PlanSection({
       note={PLAN_NOTE}
       explain={{
         question: "How does a PAC work?",
-        text: "A plan names both ends (the account each contribution leaves, and where each investment is held), because money moves from one to the other and a plan that says neither is describing a purchase nobody made. With several targets the budget is spent as one pot, so a whole-unit broker leaves one small remainder instead of one per fund, and it carries to the next contribution.",
+        text: "A plan names both ends (the account each contribution leaves, and where each investment is held), because money moves from one to the other and a plan that says neither is describing a purchase nobody made. Where each investment is held starts as the account funding the plan: change it if you buy that one somewhere else. With several targets the budget is spent as one pot, so a whole-unit broker leaves one small remainder instead of one per fund, and it carries to the next contribution. Whole units: the broker buys only whole units and the remainder stays in cash; fractional: it spends the contribution to the cent. Check which one yours does: it changes what a contribution buys. The budget's currency is proposed from the funding account's cash on the first buy's date; what you type stays. A ticker takes its exchange's suffix (VWCE.MI), and a listing in another currency is bought at its close converted into the plan's currency, at the ECB rate of that day.",
       }}
     >
       <form onSubmit={submit} className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <input className={inputClass} aria-label="Plan name" {...marks(PLAN, "name")} value={name} onChange={(e) => setName(e.target.value)} />
-          <input className={inputClass + " w-28"} type="number" step="0.01" aria-label="Budget" {...marks(PLAN, "amount")} title="Total contributed per occurrence, split across the targets below" value={amount} onChange={(e) => setAmount(e.target.value)} />
+          <input className={inputClass + " w-28"} type="number" step="0.01" aria-label="Budget" {...marks(PLAN, "amount")} value={amount} onChange={(e) => setAmount(e.target.value)} />
           <input
             className={inputClass + " w-20"}
             placeholder="currency"
+            aria-label="Currency"
             list={CURRENCY_LIST}
-            title="The currency the contribution is paid in: the source account's cash. Proposed from that account on the first buy's date; change it and it stays as you typed it."
             value={currency}
             onChange={(e) => setCurrencyChoice(e.target.value)}
           />
-          <select className={inputClass} value={frequency} onChange={(e) => setFrequency(e.target.value)}>
+          <select className={inputClass} aria-label="Frequency" value={frequency} onChange={(e) => setFrequency(e.target.value)}>
             {PAC_FREQUENCIES.map((f) => (<option key={f} value={f}>{f}</option>))}
           </select>
           <select
             className={inputClass}
             value={execution}
             onChange={(e) => setExecution(e.target.value)}
-            title="How your broker fills the order: whole units only (the remainder stays in cash), or exact fractional amounts, spending the contribution to the cent. Check which one yours does; it changes what a contribution buys."
+            aria-label="How your broker fills the order"
           >
             <option value="whole_units">whole units</option>
             <option value="fractional">fractional</option>
@@ -1110,7 +1119,7 @@ function PlanSection({
             institutions={institutions}
             placeholder="Which account funds it?"
             required
-            title="The account each contribution is taken from. Required: a plan that does not say where the money comes from cannot take it from anywhere, and its buys spend money no account ever loses."
+            label="Account it is funded from"
           />
           <DateField label={PLAN_DATE_LABEL} value={startDate} onChange={setStartDate} />
           <DateField label="end" value={endDate} onChange={setEndDate} />
@@ -1154,15 +1163,15 @@ function PlanSection({
                 placeholder="Buy what? Type to search"
                 onPick={(c) => applyPick(t.key, c)}
               />
-              <input className={inputClass + " w-32"} aria-label="Ticker" placeholder="Ticker" {...(i === 0 ? marks(PLAN, "ticker") : {})} title="Yahoo ticker with exchange suffix (e.g. VWCE.MI). A listing in another currency is bought at its close converted into the plan's currency, at the ECB rate of that day" value={t.symbol} onChange={(e) => patchTarget(t.key, { symbol: e.target.value })} />
-              <input className={inputClass + " w-36"} placeholder="ISIN (optional)" value={t.isin} onChange={(e) => patchTarget(t.key, { isin: e.target.value })} />
+              <input className={inputClass + " w-32"} aria-label="Ticker" placeholder="Ticker" {...(i === 0 ? marks(PLAN, "ticker") : {})} value={t.symbol} onChange={(e) => patchTarget(t.key, { symbol: e.target.value })} />
+              <input className={inputClass + " w-36"} placeholder="ISIN (optional)" aria-label="ISIN" value={t.isin} onChange={(e) => patchTarget(t.key, { isin: e.target.value })} />
               <InstitutionSelect
                 value={t.institutionId}
                 onChange={(v) => patchTarget(t.key, { institutionId: v })}
                 institutions={institutions}
                 placeholder="Where is it held?"
                 required
-                title="Where this investment will be held. Required: a position held at no institution is one no situation can photograph and no sale can settle. Pre-filled from the account funding the plan: change it if you buy this one somewhere else."
+                label="Where it is held"
               />
               <input
                 className={inputClass + " w-20"}
@@ -1170,7 +1179,7 @@ function PlanSection({
                 step="0.1"
                 min="0"
                 placeholder="share"
-                title="Relative share of the budget: 1/1/1 and 40/30/30 mean the same thing"
+                aria-label="Share of the budget"
                 value={t.weight}
                 onChange={(e) => patchTarget(t.key, { weight: e.target.value })}
               />
@@ -1182,7 +1191,7 @@ function PlanSection({
                   type="button"
                   onClick={() => setTargets((ts) => ts.filter((x) => x.key !== t.key))}
                   className="rounded-sm px-2 py-1 text-sm text-ink-faint hover:text-down"
-                  title="Remove this target"
+                  aria-label="Remove this target"
                 >
                   ×
                 </button>
@@ -1231,10 +1240,7 @@ function PlanSection({
         </p>
       )}
       {unknown.length > 0 && (
-        <p
-          className="border-l-2 border-warn bg-warn-tint px-3 py-2 text-xs text-warn"
-          title="Executions are matched to positions by exact ticker, so a different spelling silently starts a SECOND position for the same fund instead of adding to the one you hold. If you are starting a new plan on something you do not own yet, this is expected: the first execution creates it."
-        >
+        <p className="border-l-2 border-warn bg-warn-tint px-3 py-2 text-xs text-warn">
           <b>{unknown.map((t) => t.symbol.trim().toUpperCase()).join(", ")}</b> matches no
           position you hold: fine for a new plan, but a typo starts a second position
           instead of adding to yours.

@@ -5,7 +5,7 @@ import {
   type WatchlistItem,
 } from "../api/watchlist";
 import { RowsOrEmpty, Section, apiError, locale } from "./ui";
-import { identityOf, isShare, sizedAs } from "./watchItem";
+import { identityOf, sizedAs } from "./watchItem";
 
 /* The ideas the chat put in front of you, and what each one rested on.
 
@@ -57,7 +57,6 @@ function Item({
   // share's line (brief AG) has no ISIN: its symbol is the identity, checked
   // with Yahoo, and the line says so.
   const identity = identityOf(item);
-  const what = isShare(item) ? "share" : "fund";
   // The amount its card was sized with (brief AQ), and with it what the chat
   // assumed and what the figures were that day: an amount read in a month is
   // only worth what it stood on.
@@ -80,7 +79,6 @@ function Item({
         <div className="flex shrink-0 items-center gap-1">
           <button
             onClick={onBuy}
-            title={`Fill the ledger form below with this ${what}: you supply how many, at what price, where and when`}
             className="rounded-sm border border-rule px-2 py-1 text-xs text-ink-soft transition hover:border-olive hover:text-olive"
           >
             Record a buy
@@ -88,7 +86,6 @@ function Item({
           <button
             onClick={onDrop}
             aria-label="Drop this idea"
-            title="Drop this idea"
             className="px-2 text-ink-faint transition hover:text-down"
           >
             ✕

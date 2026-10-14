@@ -68,10 +68,7 @@ export function UnconvertedNotice({
 }) {
   if (items.length === 0) return null;
   return (
-    <div
-      className="border-l-2 border-warn bg-warn-tint px-3 py-2 text-xs text-warn"
-      title="No exchange rate is known for these currencies, so each amount written in one of them is counted at face value, as if it were already in the base currency. The figures above are therefore in more than one unit."
-    >
+    <div className="border-l-2 border-warn bg-warn-tint px-3 py-2 text-xs text-warn">
       {items.map((u, i) => (
         <span key={u.currency ?? `none-${i}`}>
           {i > 0 && " · "}

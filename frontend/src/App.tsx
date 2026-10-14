@@ -89,7 +89,6 @@ function ChatRail({ open, onToggle }: { open: boolean; onToggle: () => void }) {
       onClick={onToggle}
       aria-label={open ? "Close the chat" : "Open the chat"}
       aria-pressed={open}
-      title={open ? "Close the chat" : "Ask Aurelio about your finances"}
       className={
         "relative sticky top-0 z-10 flex h-screen w-14 shrink-0 items-center justify-center border-r transition " +
         (open
@@ -174,11 +173,14 @@ function PacBanner({
             </button>
           </span>
         )}
+        {/* The reason after a colon, not inside brackets: a reason can end in
+            its own, and "(retried on the next run))" printed two (brief AU). */}
         {result.skipped.length > 0 && (
           <span className="text-olive-deep">
-            {result.skipped.length} occurrence{result.skipped.length > 1 ? "s" : ""} skipped
-            ({result.skipped[0].reason}
-            {result.skipped.length > 1 ? ", …" : ""}). Will retry at next start.
+            {result.skipped.length === 1
+              ? "1 occurrence skipped: "
+              : `${result.skipped.length} occurrences skipped; the first: `}
+            {result.skipped[0].reason}. Will retry at next start.
           </span>
         )}
         <button
