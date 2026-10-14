@@ -108,7 +108,7 @@ def _script(monkeypatch, rounds):
     is an AssertionError, never a replay."""
     seen: list[dict] = []
 
-    def fake(system_prompt, messages, model=None, tools=None, cache_at=None):
+    def fake(system_prompt, messages, model=None, tools=None, cache_at=None, kept_to=None):
         seen.append(
             {"system": system_prompt, "messages": list(messages), "tools": tools, "model": model}
         )

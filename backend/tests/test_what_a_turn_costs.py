@@ -68,7 +68,7 @@ def _streams(monkeypatch, *rounds) -> None:
     """Script the model round by round, each round a list of yielded pairs."""
     seen: list[int] = []
 
-    def fake(system_prompt, messages, model=None, tools=None, cache_at=None):
+    def fake(system_prompt, messages, model=None, tools=None, cache_at=None, kept_to=None):
         seen.append(1)
         assert len(seen) <= len(rounds), f"round {len(seen)} is past the script"
         yield from rounds[len(seen) - 1]
@@ -126,7 +126,7 @@ def test_a_provider_that_says_nothing_records_nothing(client, monkeypatch):
 def test_an_answer_that_broke_still_records_what_it_was_sent(client, monkeypatch):
     """The input was paid for before the stream broke."""
 
-    def fake(system_prompt, messages, model=None, tools=None, cache_at=None):
+    def fake(system_prompt, messages, model=None, tools=None, cache_at=None, kept_to=None):
         yield _used(11119, cached=0, cost=0.0556)
         raise advisor.AdvisorError("LLM stream failed: connection reset")
 

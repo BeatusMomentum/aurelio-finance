@@ -39,7 +39,7 @@ def _events(response) -> list[dict]:
 def _script(monkeypatch, rounds):
     seen: list[dict] = []
 
-    def fake(system_prompt, messages, model=None, tools=None, cache_at=None):
+    def fake(system_prompt, messages, model=None, tools=None, cache_at=None, kept_to=None):
         seen.append({"system": system_prompt, "messages": list(messages)})
         assert len(seen) <= len(rounds), f"round {len(seen)} is past the script"
         yield from rounds[len(seen) - 1]

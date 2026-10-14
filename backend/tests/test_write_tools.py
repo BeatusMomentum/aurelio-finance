@@ -634,7 +634,7 @@ def _stream(monkeypatch, rounds):
     call into a loop that never ends."""
     seen: list[dict] = []
 
-    def fake(system_prompt, messages, model=None, tools=None, cache_at=None):
+    def fake(system_prompt, messages, model=None, tools=None, cache_at=None, kept_to=None):
         seen.append({"messages": list(messages)})
         assert len(seen) <= len(rounds), f"round trip {len(seen)} is past the script"
         yield from rounds[len(seen) - 1]

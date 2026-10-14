@@ -1594,7 +1594,13 @@ def stream(turn: PreparedTurn) -> Iterator[schemas.ChatEvent]:
 
     Every round but that last one asks the provider to keep what it read
     (`_kept_prefixes`), which only Anthropic's models need asking for; the
-    request to any other model is what it was before the cache came in.
+    request to any other model is what it was before the cache came in. On a
+    question's turn the round before the last keeps nothing new: it reads up to
+    where the round before it ended (`advisor.stream_llm`'s `kept_to`), since
+    what it would keep only a round with the same tools could read, and the
+    last has none. The turn after a decision is left as it was: its round
+    before the last is its first, which ends on the note about the decision,
+    and whether a later turn reads what it keeps there is unmeasured.
 
     Tools run in a session of this function's own, for the reason `_store_answer`
     opens one: the request's session belongs to the request, and by the time a
@@ -1654,6 +1660,8 @@ def stream(turn: PreparedTurn) -> Iterator[schemas.ChatEvent]:
         kept = _kept_prefixes(messages)
         # How many web searches the turn has run, against WEB_SEARCHES_PER_TURN.
         searched = 0
+        # How many messages the round before this one sent.
+        sent = 0
         for completion in range(1, allowed + 1):
             # The last round is asked with no tools, so it can only write. That
             # is the whole of the old error path, deleted rather than caught.
@@ -1662,6 +1670,12 @@ def stream(turn: PreparedTurn) -> Iterator[schemas.ChatEvent]:
             said: list[str] = []
             system, asked = _asked(
                 completion, turn.model, messages, rounds=allowed, warn=turn.decision is None
+            )
+            # On a question's turn the round before the last reads up to where
+            # the round before it ended, and keeps nothing new (its question,
+            # on a first round). Not on the turn after a decision (see above).
+            kept_to = (
+                max(sent - 1, 0) if turn.decision is None and completion == allowed - 1 else None
             )
             rounds.append(None)
             for kind, piece in advisor.stream_llm(
@@ -1674,6 +1688,7 @@ def stream(turn: PreparedTurn) -> Iterator[schemas.ChatEvent]:
                 # wrote could be read only by another round without them, and
                 # none follows it.
                 cache_at=None if last else kept,
+                kept_to=kept_to,
             ):
                 if kind == "thought":
                     _say(blocks, "thought", piece)
@@ -1691,6 +1706,9 @@ def stream(turn: PreparedTurn) -> Iterator[schemas.ChatEvent]:
                     rounds[-1] = piece
                 else:
                     calls.append(piece)
+            # Counted before `messages` grows, since `asked` is that same list
+            # on a round with no notice.
+            sent = len(asked)
             # `last` and not `not calls` alone: a call arriving on a round
             # that was offered no tools is a model contradicting the request,
             # and running it would spend a fetch on an answer no completion is

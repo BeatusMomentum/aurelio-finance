@@ -1932,8 +1932,10 @@ def call_round(
     what it would write. In brief AR's P1 (2026-10-12) one such round read
     nothing and wrote 16,915 tokens that no request read, each billed a
     quarter above an unmarked one. The chat's last round asks for nothing
-    either (`chat.py`). Every request of the step names the analysis's session
-    (ANALYSIS_SESSION_ID); any other model's request carries neither.
+    either (`chat.py`), and since brief AT its round before the last is marked
+    as here (`stream_llm`'s `kept_to`). Every request of the step names the
+    analysis's session (ANALYSIS_SESSION_ID); any other model's request
+    carries neither.
 
     How the round ended is read before what it says. "stop" is an answer, and
     "tool_calls" too on a round that offered tools; anything else raises
@@ -2123,6 +2125,7 @@ def stream_llm(
     model: str | None = None,
     tools: list[dict] | None = None,
     cache_at: tuple[int, ...] | None = None,
+    kept_to: int | None = None,
 ) -> Iterator[tuple[str, str | ToolCall | Usage]]:
     """The streaming sibling of `call_llm`: yields the answer as it is written,
     one `(kind, piece)` pair at a time, for a whole conversation rather than a
@@ -2158,6 +2161,17 @@ def stream_llm(
     on Opus 5.5, in a paid probe: a round that adds a tool
     exchange read all 12,035 tokens the round before it had written, and a
     read was billed at a twentieth of the input price.
+
+    `kept_to` is for the round before the last of a question's turn
+    (`chat.py`): the index in `messages` of the last message the round before
+    it sent. The end's marker goes there instead, so the round reads all the
+    round before it wrote and keeps nothing new: what it would keep only a
+    round with the same tools could read, and the round after it offers none.
+    It takes the end's place, so a request still carries four markers at most.
+    Measured in brief AT's replay (2026-10-14), two requests the chat built,
+    on Opus 5.5: a later turn's sixth round so marked read the 23,600 tokens
+    its fifth had written and wrote none. The analysis's rounds do the same
+    (`call_round`, measured in brief AR's check).
 
     Every call to a model that caches only on request also names its session
     (`SESSION_ID`), whatever `cache_at` says: the round with no tools reads
@@ -2221,8 +2235,10 @@ def stream_llm(
                 f"request with more than four markers, so {_MARKED_MESSAGES} at most"
             )
         system = [{"type": "text", "text": system_prompt, "cache_control": _EPHEMERAL}]
-        asked = [_kept(m) if i in cache_at else m for i, m in enumerate(messages)]
-        extra["cache_control"] = _EPHEMERAL
+        marked = set(cache_at) if kept_to is None else {*cache_at, kept_to}
+        asked = [_kept(m) if i in marked else m for i, m in enumerate(messages)]
+        if kept_to is None:
+            extra["cache_control"] = _EPHEMERAL
     try:
         stream = client.chat.completions.create(
             model=model,

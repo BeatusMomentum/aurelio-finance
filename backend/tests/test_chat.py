@@ -74,7 +74,7 @@ def _fake_stream(
     a missing bound pass as green."""
     seen: list[dict] = []
 
-    def fake(system_prompt, messages, model=None, tools=None, cache_at=None):
+    def fake(system_prompt, messages, model=None, tools=None, cache_at=None, kept_to=None):
         # A COPY of the list, because the caller keeps appending to its own as
         # the loop runs: recorded by reference, round one's record would show
         # the tool result that only round two was given, and every assertion

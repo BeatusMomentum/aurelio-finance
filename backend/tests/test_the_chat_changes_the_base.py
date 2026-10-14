@@ -59,7 +59,7 @@ def _events(response) -> list[dict]:
 
 
 def _script(monkeypatch, rounds):
-    def fake(system_prompt, messages, model=None, tools=None, cache_at=None):
+    def fake(system_prompt, messages, model=None, tools=None, cache_at=None, kept_to=None):
         yield from rounds.pop(0)
 
     monkeypatch.setattr(advisor, "stream_llm", fake)

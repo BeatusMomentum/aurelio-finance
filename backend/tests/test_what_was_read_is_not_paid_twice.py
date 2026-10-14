@@ -11,6 +11,12 @@ whose writes nothing could read. Measured on the wire before this was built
 (a paid probe, 2026-10-05): on Opus 5.5 a second round read all
 12,035 tokens the first had written, at a twentieth of the input price.
 
+Since brief AT the round before the last, on a question's turn, puts its end
+marker on the last message the round before it sent instead: it reads all
+that round wrote and keeps nothing new, since what it would keep only a round
+with the same tools could read, and the one after it has none. The turn after
+a decision keeps its end marker: its round before the last is its first.
+
 The other models in the menu cache by themselves or not at all, and what a
 marker would do to them is unmeasured, so their requests stay exactly what
 they were. That is the second half of what these tests pin: for them nothing
@@ -162,6 +168,11 @@ def _text(message: dict) -> str | None:
     return content[0]["text"] if isinstance(content, list) else content
 
 
+def _plain(message: dict) -> dict:
+    """A message with its marker taken off: its words a plain string again."""
+    return {**message, "content": _text(message)}
+
+
 # --- Which models -----------------------------------------------------------------
 
 
@@ -206,19 +217,25 @@ def test_every_round_asks_again_and_the_round_without_tools_asks_nothing(
     client, openrouter, monkeypatch
 ):
     """Three rounds, so that the second is the one told it is the last with
-    tools and the third has none. The first two ask for the cache in the same
-    places, and the notice goes at the end of its round, after the tool result,
-    where it leaves the round's cache whole. The third asks for nothing:
-    everything a provider caches begins with the tools, so what a round without
-    them wrote could be read only by another round without them."""
+    tools and the third has none. The first asks for the cache at the system
+    prompt, the picture and its end. The second, the round before the last,
+    at the same two and at the end of what the first sent, its question, and
+    not at its own end: what it would keep there only a round with the tools
+    could read. Its notice goes at the end, after the tool result, where it
+    leaves the round's cache whole. The third asks for nothing: everything a
+    provider caches begins with the tools, so what a round without them wrote
+    could be read only by another round without them."""
     monkeypatch.setattr(chat, "MAX_COMPLETIONS_PER_TURN", 3)
     openrouter.script = [_reads_run_one(1), _reads_run_one(2), _says("Non ho trovato analisi.")]
 
     _ask(client, "cosa diceva l'ultima analisi?", OPUS)
 
     first, second, third = openrouter.asked
-    assert _markers(first) == _markers(second) == ["system", "1", "top"]
-    assert second["messages"][: len(first["messages"])] == first["messages"]
+    assert _markers(first) == ["system", "1", "top"]
+    assert _markers(second) == ["system", "1", str(len(first["messages"]) - 1)]
+    assert [_plain(m) for m in second["messages"][: len(first["messages"])]] == [
+        _plain(m) for m in first["messages"]
+    ]
     assert second["messages"][-1] == {"role": "user", "content": chat.LAST_TOOL_ROUND_NOTICE}
     assert second["messages"][-2]["role"] == "tool"
     assert _text(second["messages"][0]) == chat.system_prompt(OPUS)
@@ -251,6 +268,84 @@ def test_a_later_turn_also_keeps_the_conversation_before_its_newest_question(
     # label instead, so that question is the first byte the two turns differ.
     assert _text(turn_one["messages"][3]) != _text(earlier)
     assert turn_one["messages"][1] == turn_two["messages"][1]
+
+
+def _events(response) -> list[dict]:
+    assert response.status_code == 200, response.text
+    return [
+        json.loads(frame.split("\n")[1][len("data: "):])
+        for frame in response.text.strip().split("\n\n")
+    ]
+
+
+def test_the_round_before_the_last_reads_up_to_where_the_round_before_it_ended(
+    client, openrouter
+):
+    """A question's turn that runs to the round with no tools, at the app's
+    own bound. Rounds 1 to 5 mark the system prompt, the picture and their
+    end, each reading what the one before it wrote. The sixth puts its last
+    marker on the last message the fifth sent, a tool's answer, its words
+    unchanged, and none at its end: it reads all the fifth wrote and keeps
+    nothing new, since the seventh offers no tools and begins otherwise. The
+    seventh asks for nothing. Every round names the session."""
+    openrouter.script = [_reads_run_one(n) for n in range(1, 7)] + [_says("Non ho trovato analisi.")]
+
+    _ask(client, "cosa diceva l'ultima analisi?", OPUS)
+
+    bodies = openrouter.asked
+    assert len(bodies) == chat.MAX_COMPLETIONS_PER_TURN == 7
+    fifth, sixth, seventh = bodies[4:]
+    assert [_markers(b) for b in bodies[:5]] == [["system", "1", "top"]] * 5
+    ended = len(fifth["messages"]) - 1
+    assert _markers(sixth) == ["system", "1", str(ended)]
+    kept = sixth["messages"][ended]
+    assert kept["role"] == "tool" and kept["content"][0]["cache_control"] == KEEP
+    assert _text(kept) == fifth["messages"][-1]["content"]
+    assert sixth["messages"][-1] == {"role": "user", "content": chat.LAST_TOOL_ROUND_NOTICE}
+    assert "cache_control" not in json.dumps(seventh)
+    assert [b["session_id"] for b in bodies] == [advisor.SESSION_ID] * 7
+
+
+def test_on_a_later_turn_that_round_carries_four_markers(client, openrouter):
+    """The earlier question's marker stays beside it: four, Anthropic's
+    limit, the end's place taken and not added to."""
+    openrouter.script = [
+        _says("Hai 17.992 euro."),
+        *[_reads_run_one(n) for n in range(1, 7)],
+        _says("Nessuna analisi."),
+    ]
+
+    conversation = _ask(client, "quanto ho da parte?", OPUS)
+    _ask(client, "e l'ultima analisi?", OPUS, conversation)
+
+    turn_two = openrouter.asked[1:]
+    assert len(turn_two) == 7
+    assert [_markers(b) for b in turn_two[:5]] == [["system", "1", "3", "top"]] * 5
+    assert _markers(turn_two[5]) == ["system", "1", "3", str(len(turn_two[4]["messages"]) - 1)]
+
+
+def test_the_turn_after_a_decision_keeps_the_end_of_its_first_round(client, openrouter):
+    """A guard. That turn is asked at most twice (`chat.DECISION_ROUNDS`), so
+    its round before the last is its first, which ends on the app's note
+    about the decision. It keeps its end marker: whether a later turn reads
+    what it writes there is unmeasured, and nothing is taken from it."""
+    goal = {
+        "action": "add", "name": "House deposit", "type": "target_amount",
+        "target_amount": 30000, "target_date": "2031-03-31", "monthly_contribution": 400,
+    }
+    openrouter.script = [_calls("write_goal", goal, "call_1")]
+    events = _events(client.post("/api/chat", json={"content": "aggiungi l'obiettivo", "model": OPUS, "page": PAGE}))
+    (card,) = [e["card"] for e in events if e["kind"] == "card"]
+    openrouter.script = [_reads_run_one(9), _says("Va bene.")]
+
+    decided = _events(client.post(f"/api/chat/cards/{card['card_id']}", json={"decision": "reject"}))
+
+    assert decided[-1]["kind"] == "done", decided
+    first, last = openrouter.asked[1:]
+    assert _markers(first)[0] == "system" and _markers(first)[-1] == "top"
+    note = first["messages"][-1]
+    assert note["role"] == "user" and "They rejected" in note["content"]
+    assert "cache_control" not in json.dumps(last)
 
 
 def test_more_than_two_messages_named_is_refused_before_anything_is_sent(openrouter):
@@ -347,7 +442,7 @@ def test_the_markers_are_all_that_changes_for_an_anthropic_model(
     assert len(opus) == len(qwen) == 4
     assert [_markers(b) for b in opus] == [
         ["system", "1", "top"],
-        ["system", "1", "top"],
+        ["system", "1", "3"],
         [],
         ["system", "1", "3", "top"],
     ]

@@ -38,7 +38,7 @@ def _script(monkeypatch, rounds) -> list[list[dict]]:
     """Each round's messages, as the model was asked them."""
     seen: list[list[dict]] = []
 
-    def fake(system_prompt, messages, model=None, tools=None, cache_at=None):
+    def fake(system_prompt, messages, model=None, tools=None, cache_at=None, kept_to=None):
         seen.append(list(messages))
         yield from rounds.pop(0)
 

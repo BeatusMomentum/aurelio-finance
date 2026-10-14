@@ -389,7 +389,7 @@ def test_accepting_the_same_card_twice_is_refused_by_the_endpoint(loaded, monkey
     the tool."""
     seen: list = []
 
-    def fake_stream(system, messages, model=None, tools=None, cache_at=None):
+    def fake_stream(system, messages, model=None, tools=None, cache_at=None, kept_to=None):
         seen.append(messages)
         yield ("text", "Parked it.")
 

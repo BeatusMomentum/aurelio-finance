@@ -52,7 +52,7 @@ def _script(monkeypatch, rounds):
     asked. A round past the script is an AssertionError, never a replay."""
     seen: list[dict] = []
 
-    def fake(system_prompt, messages, model=None, tools=None, cache_at=None):
+    def fake(system_prompt, messages, model=None, tools=None, cache_at=None, kept_to=None):
         seen.append({"system": system_prompt, "messages": list(messages), "tools": tools})
         assert len(seen) <= len(rounds), f"round {len(seen)} is past the script"
         yield from rounds[len(seen) - 1]
