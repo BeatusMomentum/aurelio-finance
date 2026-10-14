@@ -1,4 +1,13 @@
-import { useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+  type Ref,
+} from "react";
 import {
   createInstitution,
   deleteInstitution,
@@ -21,7 +30,6 @@ import {
   getHoldings,
   updateHolding,
   type Holding,
-  type HoldingCreate,
 } from "../api/holdings";
 import { getListingCurrencies, getQuote, refreshHoldingPrice, type PriceQuote } from "../api/prices";
 import { getPortfolio, type PortfolioRow } from "../api/portfolio";
@@ -41,6 +49,7 @@ import {
 } from "../api/cash";
 import {
   Breadcrumb,
+  Explainer,
   Row,
   RowsOrEmpty,
   Section,
@@ -51,6 +60,7 @@ import {
   locale,
   todayISO,
   type Crumb,
+  type Explain,
   CURRENCY_LIST,
 } from "./ui";
 import { CancelButton, money, policyWord } from "./ui";
@@ -58,12 +68,13 @@ import { accountCurrencyOn, listingCurrencyOf } from "./proposedCurrency";
 import { CASH_ANCHOR, INSTITUTION, holding, marks, refusal } from "./required";
 import { absentTickerCost } from "./absentTicker";
 import { DatedAmountEditor } from "./DatedAmountEditor";
-import { classOnSave, sortIntoBuckets, type Bucket } from "./buckets";
+import { BUCKETS, bucketOf, classOnSave, sortIntoBuckets, type Bucket } from "./buckets";
 import { GONE, reread } from "./reopen";
 import { dayCount, daysAgo } from "./calendarDays";
 import { closeTooFar } from "./closeGap";
 import { dividendWord } from "./dividendLine";
 import { priceDay } from "./priceDay";
+import { holdingPayload, offers, shows } from "./situationForm";
 
 // The occasional, destructive twin of a primary action: same size, same
 // shape, warning colour. `btnClass` is for the action you take every time;
@@ -838,15 +849,18 @@ function SituationDetail({ snapshot }: { snapshot: Snapshot }) {
   // price cache knows it, and otherwise the account's on this situation's date.
   const [anchors, setAnchors] = useState<CashAnchor[]>([]);
   const [listing, setListing] = useState<Record<string, string>>({});
+  // Only the first load replaces the page with "Loading…". A save reloads in
+  // place, so the one form keeps the group the reader chose.
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // The one form, which a row's ✎ fills.
+  const form = useRef<PositionFormHandle>(null);
 
   useEffect(() => {
     void load();
   }, [snapshot.id]);
 
   async function load() {
-    setLoading(true);
     setError(null);
     try {
       const [h, a, l] = await Promise.all([
@@ -876,6 +890,8 @@ function SituationDetail({ snapshot }: { snapshot: Snapshot }) {
   // below telling the reader to start the day they were already in.
   const ageDays = daysAgo(snapshot.date);
   const isPast = ageDays > 0;
+  // The day this situation's prices are asked for (priceDay.ts).
+  const day = priceDay(snapshot.date, todayISO());
 
   if (loading) return <p className="text-ink-soft">Loading…</p>;
   if (error) return <p className="text-down">{error}</p>;
@@ -905,42 +921,126 @@ function SituationDetail({ snapshot }: { snapshot: Snapshot }) {
           what that day said. For today, use “Start from the last one”.
         </p>
       )}
-      {/* Every holding in exactly one bucket, or the buckets stop adding up to
-          the total above — see buckets.ts. */}
-      {sortIntoBuckets(holdings).map(({ bucket, holdings: shown }) => (
-        <BucketSection
-          key={bucket.cls}
-          bucket={bucket}
-          snapshotDate={snapshot.date}
-          snapshotId={snapshot.id}
-          holdings={shown}
-          baseCurrency={baseCurrency}
-          accountCurrency={accountCurrencyOn(anchors, snapshot.institution_id, snapshot.date)}
-          listing={listing}
-          onChanged={load}
-        />
-      ))}
+      <PositionForm
+        ref={form}
+        snapshotId={snapshot.id}
+        snapshotDate={snapshot.date}
+        day={day}
+        baseCurrency={baseCurrency}
+        accountCurrency={accountCurrencyOn(anchors, snapshot.institution_id, snapshot.date)}
+        listing={listing}
+        onChanged={load}
+      />
+      {/* Every holding in exactly one group, or the groups stop adding up to
+          the total above (buckets.ts). A group is drawn when it holds a row:
+          the form above is where a row is added to any of them. */}
+      {sortIntoBuckets(holdings)
+        .filter(({ holdings: shown }) => shown.length > 0)
+        .map(({ bucket, holdings: shown }) => (
+          <BucketList
+            key={bucket.cls}
+            bucket={bucket}
+            holdings={shown}
+            baseCurrency={baseCurrency}
+            day={day}
+            onEdit={(h) => form.current?.edit(h)}
+            onDeleted={(h) => form.current?.forget(h.id)}
+            onChanged={load}
+          />
+        ))}
     </div>
   );
 }
 
-function BucketSection({
-  bucket,
+/* A field of the situation's form: its name in view, which is also its
+   accessible name, the control, and the rule that governs the number typed,
+   said once, under it. */
+function Field({
+  label,
+  htmlFor,
+  wide = false,
+  rule,
+  ruleId,
+  children,
+}: {
+  label: string;
+  /** The control the label names; none for a cell holding only a button. */
+  htmlFor?: string;
+  /** Two columns from 640px on, for the name. */
+  wide?: boolean;
+  rule?: ReactNode;
+  /** For the control's `aria-describedby`. */
+  ruleId?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className={"min-w-0 space-y-1" + (wide ? " sm:col-span-2" : "")}>
+      {htmlFor ? (
+        <label htmlFor={htmlFor} className="block text-xs font-medium text-ink-soft">
+          {label}
+        </label>
+      ) : (
+        <span className="block text-xs font-medium text-ink-soft">{label}</span>
+      )}
+      {children}
+      {rule && (
+        <p id={ruleId} className="text-xs text-ink-faint">
+          {rule}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/* What the form's "?" holds: what is read once, for the fields the group
+   shows. The rules that govern a number typed are under their fields. */
+function explainFor(group: Bucket): Explain {
+  const ticker =
+    "The ticker prices the position. A listing in your base currency needs no conversion.";
+  if (!offers(group, "isin")) return { question: "What does the ticker do?", text: ticker };
+  return {
+    question: "What do the ISIN and the dividend options do?",
+    text:
+      ticker +
+      " The ISIN is what the look-through reads to see inside a fund: the same fund has a different ticker on each exchange, so one field cannot do both." +
+      " Dividends from its history: the app reads the holding's dividends on Yahoo once a day and credits each one to this account's cash, which is how a share works." +
+      " Distributing: the same, as you or the catalogue stated it. Accumulating: no dividend is recorded, for a fund that reinvests them.",
+  };
+}
+
+/** How SituationDetail reaches its one form. */
+type PositionFormHandle = {
+  /** Fill the form with a row, to correct it: its group shown and fixed. */
+  edit: (h: Holding) => void;
+  /** A row was deleted: if it is the one being corrected, start again. */
+  forget: (id: number) => void;
+};
+
+/* The situation's one form (brief AU). The group comes first and nothing is
+   chosen for the reader; then that group's fields, each named in view, each
+   rule said once under the field whose number it governs, and what is read
+   once behind the "?". It sends what each of the five group forms it replaces
+   sent (situationForm.ts, tested against their code). A row being corrected
+   keeps its group, fixed, as the five forms did: a row could not change
+   bucket. */
+function PositionForm({
   snapshotId,
   snapshotDate,
-  holdings,
+  day,
   baseCurrency,
   accountCurrency,
   listing,
   onChanged,
+  ref,
 }: {
-  bucket: Bucket;
   snapshotId: number;
   // The date this photograph claims to describe. It gates the quantity
   // derivation below: dividing an OLD value by TODAY's price fabricates a
   // number of units that never existed.
   snapshotDate: string;
-  holdings: Holding[];
+  /** The day a price is asked for: the situation's own when it is a past one,
+      null on today's (priceDay.ts). */
+  day: string | null;
   /** The base the situation's converted figures are in, as declared. */
   baseCurrency: string;
   /** The account's currency on the situation's date (its anchor in force), or
@@ -949,10 +1049,12 @@ function BucketSection({
   /** The listing currencies the price cache knows, by symbol. */
   listing: Record<string, string>;
   onChanged: () => Promise<void> | void;
+  ref?: Ref<PositionFormHandle>;
 }) {
+  const [group, setGroup] = useState<Bucket | null>(null);
   const [editId, setEditId] = useState<number | null>(null);
-  // The class of the row being edited, kept as it was: a bucket shows more than
-  // one class, and saving must not rename a `fund_etf` to the bucket's `equity`.
+  // The class of the row being edited, kept as it was: a group shows more than
+  // one class, and saving must not rename a `fund_etf` to the group's `equity`.
   const [editClass, setEditClass] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [symbol, setSymbol] = useState("");
@@ -964,25 +1066,14 @@ function BucketSection({
   const [quantity, setQuantity] = useState("");
   const [unitPrice, setUnitPrice] = useState("");
   const [distPolicy, setDistPolicy] = useState("");
-  // What leaving the ticker empty costs this row as it stands (absentTicker.ts):
-  // said under the form while it is being written, and read with the ticker box.
-  const tickerCost = absentTickerCost({
-    name,
-    symbol,
-    isin,
-    mode,
-    policy: distPolicy,
-    assetClass: classOnSave(bucket, editId != null ? { asset_class: editClass } : null),
-  });
-  const tickerCostId = useId();
-  // The ISIN sits behind a disclosure. Its cost is conditional: with a
-  // ticker the look-through finds the ISIN itself, and when it cannot, its
-  // reason says "Add the fund's ISIN to this holding", pointing here; with
-  // no ticker, the line above says so. It opens by itself whenever it holds a
-  // value, so a stored or picked ISIN is never hidden. The dividend policy
-  // stays in view: an empty one loses a paying security's dividends.
+  // The ISIN sits behind a disclosure in the groups that offer it. Its cost
+  // is conditional: with a ticker the look-through finds the ISIN itself, and
+  // when it cannot, its reason says "Add the fund's ISIN to this holding",
+  // pointing here; with no ticker, the line under the ticker says so. It
+  // opens by itself whenever it holds a value, so a stored or picked ISIN is
+  // never hidden, in any group. The dividend policy stays in view where it is
+  // offered: an empty one loses a paying security's dividends.
   const [isinOpen, setIsinOpen] = useState(false);
-  const isinShown = isinOpen || isin.trim() !== "";
   const [submitting, setSubmitting] = useState(false);
   const [fetchingPrice, setFetchingPrice] = useState(false);
   const [priceNote, setPriceNote] = useState<string | null>(null);
@@ -995,23 +1086,50 @@ function BucketSection({
      hand. */
   const [currencyChoice, setCurrencyChoice] = useState<string | null>(null);
   const [learned, setLearned] = useState<Record<string, string>>({});
-  const [refreshingId, setRefreshingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // The day this situation's prices are asked for: its own, when it is a past
-  // one (priceDay.ts); null on today's, which asks the latest close.
-  const day = priceDay(snapshotDate, todayISO());
+  const card = useRef<HTMLDivElement>(null);
+  const headingId = useId();
+  const groupId = useId();
+  const nameId = useId();
+  const tickerId = useId();
+  const tickerRuleId = useId();
+  const isinId = useId();
+  const costId = useId();
+  const costRuleId = useId();
+  const policyId = useId();
+  const modeId = useId();
+  const valueId = useId();
+  const valueRuleId = useId();
+  const quantityId = useId();
+  const priceId = useId();
+  const currencyId = useId();
+  const currencyRuleId = useId();
 
   const currency =
     currencyChoice ??
     listingCurrencyOf({ ...listing, ...learned }, symbol) ??
     accountCurrency ??
     baseCurrency;
-
-  // Converted rows only — see the situation's total, one component up.
-  const subtotal = holdings.reduce((acc, h) => acc + h.value_base, 0);
+  const editing = editId != null ? { asset_class: editClass } : null;
+  // What leaving the ticker empty costs this row as it stands (absentTicker.ts):
+  // said under the ticker, with its rule, while the row is written, and read
+  // with its box.
+  const tickerCost = group
+    ? absentTickerCost({
+        name,
+        symbol,
+        isin,
+        mode,
+        policy: distPolicy,
+        assetClass: classOnSave(group, editing),
+      })
+    : null;
+  const isinShown = group != null && (isin.trim() !== "" || (isinOpen && offers(group, "isin")));
   const computed =
     mode === "qty" && quantity && unitPrice ? Number(quantity) * Number(unitPrice) : null;
 
+  // After a save or a Cancel the group stays as it was: the next row is often
+  // of the same kind.
   function reset() {
     setEditId(null);
     setEditClass(null);
@@ -1031,16 +1149,20 @@ function BucketSection({
   }
 
   function startEdit(h: Holding) {
+    setGroup(bucketOf(h.asset_class));
     setEditId(h.id);
     setEditClass(h.asset_class ?? null);
     setName(h.asset_name);
     setSymbol(h.symbol ?? "");
     setIsin(h.isin ?? "");
+    setIsinOpen(false);
     setCost(h.cost_basis != null ? String(h.cost_basis) : "");
     setDistPolicy(h.distribution_policy ?? "");
     // A stored position's currency is what it says, not a proposal.
     setCurrencyChoice(h.currency);
     setPriceNote(null);
+    setPickNote(null);
+    setError(null);
     if (h.quantity != null && h.unit_price != null) {
       setMode("qty");
       setQuantity(String(h.quantity));
@@ -1054,45 +1176,33 @@ function BucketSection({
     }
   }
 
+  useImperativeHandle(ref, () => ({
+    edit(h) {
+      startEdit(h);
+      card.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      // The form itself takes the focus, so the next Tab is its first field.
+      // Not the name's box: focusing it opens the catalogue's list over the
+      // form, with the name already searched.
+      card.current?.focus({ preventScroll: true });
+    },
+    forget(id) {
+      if (editId === id) reset();
+    },
+  }));
+
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (!group) return;
     const refused = refusal(needs, { name, value, quantity, unitPrice });
     if (refused) {
       setError(refused);
       return;
     }
-    // A new row takes this bucket's class; an edited one keeps its own.
-    const assetClass = classOnSave(bucket, editId != null ? { asset_class: editClass } : null);
-    let payload: HoldingCreate;
-    if (mode === "qty") {
-      payload = {
-        asset_name: name.trim(),
-        asset_class: assetClass,
-        symbol: symbol.trim() || null,
-        isin: isin.trim().toUpperCase() || null,
-        quantity: Number(quantity),
-        unit_price: Number(unitPrice),
-        value: null,
-        cost_basis: cost ? Number(cost) : null,
-        // The box's currency: the reader's, or the listing's (a USD stock's
-        // qty x price is a USD amount), or the account's.
-        currency,
-        distribution_policy: distPolicy || null,
-      };
-    } else {
-      payload = {
-        asset_name: name.trim(),
-        asset_class: assetClass,
-        symbol: symbol.trim() || null,
-        isin: isin.trim().toUpperCase() || null,
-        quantity: null,
-        unit_price: null,
-        value: Number(value),
-        cost_basis: cost ? Number(cost) : null,
-        currency,
-        distribution_policy: distPolicy || null,
-      };
-    }
+    const payload = holdingPayload(
+      { name, symbol, isin, cost, policy: distPolicy, mode, value, quantity, unitPrice, currency },
+      group,
+      editing,
+    );
     setSubmitting(true);
     setError(null);
     try {
@@ -1106,23 +1216,6 @@ function BucketSection({
       setSubmitting(false);
     }
   }
-
-  async function remove(h: Holding) {
-    if (!window.confirm(`Remove "${h.asset_name}"?`)) return;
-    setError(null);
-    try {
-      await deleteHolding(h.id);
-      if (editId === h.id) reset();
-      await onChanged();
-    } catch (err) {
-      setError(apiError(err, "Delete failed."));
-    }
-  }
-
-  // Validate the ticker against the market. `force` (explicit button) always
-  // refills the price; on-blur validation only fills it if still empty, so it
-  // never clobbers a price you typed by hand. Soft check — failure never blocks
-  // saving (you may be offline, or holding an instrument we can't price).
 
   // The close of a past situation's day, or null when none came back. Asked
   // after the latest quote has named the instrument, so its failure is said in
@@ -1179,6 +1272,10 @@ function BucketSection({
     }
   }
 
+  // Validate the ticker against the market. `force` (explicit button) always
+  // refills the price; on-blur validation only fills it if still empty, so it
+  // never clobbers a price you typed by hand. Soft check — failure never blocks
+  // saving (you may be offline, or holding an instrument we can't price).
   async function fetchPrice(force = true) {
     if (!symbol.trim()) return;
     setFetchingPrice(true);
@@ -1225,6 +1322,335 @@ function BucketSection({
     }
   }
 
+  return (
+    <div
+      ref={card}
+      tabIndex={-1}
+      role="group"
+      aria-labelledby={headingId}
+      className={cardClass + " scroll-mt-6 p-4"}
+    >
+      <div className="mb-3 flex items-center gap-2">
+        <h3 id={headingId} className="text-sm font-semibold text-ink">
+          {editId != null ? "Correct a position" : "Add a position"}
+        </h3>
+        {group && <Explainer {...explainFor(group)} />}
+      </div>
+      <form
+        onSubmit={submit}
+        className="grid grid-cols-1 items-start gap-x-3 gap-y-4 sm:grid-cols-2 lg:grid-cols-4"
+      >
+        <Field label="Group" htmlFor={groupId}>
+          {/* Fixed while a row is corrected: its group is where it was saved,
+              and the five forms could not move a row either. */}
+          <select
+            id={groupId}
+            className={inputClass + " w-full"}
+            aria-required
+            disabled={editId != null}
+            value={group?.cls ?? ""}
+            onChange={(e) => setGroup(BUCKETS.find((b) => b.cls === e.target.value) ?? null)}
+          >
+            <option value="" disabled>
+              Which group?
+            </option>
+            {BUCKETS.map((b) => (
+              <option key={b.cls} value={b.cls}>
+                {b.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {group && (
+          <>
+            {/* The name field IS the catalogue search. Picking fills the fields
+                that otherwise stay empty and switch features off in silence —
+                the ISIN the look-through needs, and the acc/dist that decides
+                whether dividends are ever collected. It fills identity only:
+                the ticker and the currency stay as typed, because the
+                catalogue's belong to a different listing. */}
+            <Field label="Name" htmlFor={nameId} wide>
+              <InstrumentPicker
+                id={nameId}
+                label="Name"
+                wide
+                value={name}
+                onChange={setName}
+                mark={marks(needs, "name")}
+                onPick={(c) => {
+                  setName(c.name);
+                  if (c.source === "catalogue") {
+                    setIsin(c.isin);
+                    if (c.distribution_policy) setDistPolicy(c.distribution_policy);
+                    setPickNote(
+                      [c.isin, policyWord(c.distribution_policy)].filter(Boolean).join(" · ") +
+                        " from the catalogue. The ticker is still yours to give: this fund" +
+                        " trades under a different symbol on each exchange.",
+                    );
+                    return;
+                  }
+                  // The other two lanes fill the SYMBOL, which is the half the
+                  // catalogue cannot give — and no ISIN, which is the half Yahoo
+                  // does not have. Then the existing check runs, because a symbol
+                  // is only confirmed by a quote coming back with a currency and
+                  // a name.
+                  setSymbol(c.symbol);
+                  setPickNote(
+                    c.source === "owned"
+                      ? `${c.symbol}: the symbol already on your position${
+                          c.institution ? ` at ${c.institution}` : ""
+                        }.`
+                      : `${c.symbol} on ${c.exchange ?? "its exchange"}: checking what it prices…`,
+                  );
+                  void fetchPrice(true);
+                }}
+              />
+            </Field>
+            <Field
+              label="Ticker or ISIN"
+              htmlFor={tickerId}
+              rule={
+                <>
+                  With its exchange's suffix: VWCE.MI for Milan, SAP.DE for Xetra, BTC-EUR for a
+                  coin, none for a US share. A fund's ISIN works too.
+                  {tickerCost && <span className="mt-1 block text-ink-soft">{tickerCost}</span>}
+                </>
+              }
+              ruleId={tickerRuleId}
+            >
+              <input
+                id={tickerId}
+                className={inputClass + " w-full"}
+                aria-describedby={tickerRuleId}
+                value={symbol}
+                onChange={(e) => setSymbol(e.target.value)}
+                onBlur={() => {
+                  if (symbol.trim()) void fetchPrice(false);
+                }}
+              />
+            </Field>
+            {(isinShown || offers(group, "isin")) && (
+              <Field label="ISIN (optional)" htmlFor={isinShown ? isinId : undefined}>
+                {isinShown ? (
+                  <input
+                    id={isinId}
+                    className={inputClass + " w-full"}
+                    autoFocus={isinOpen}
+                    value={isin}
+                    onChange={(e) => setIsin(e.target.value)}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    aria-expanded={false}
+                    aria-label="Add the fund's ISIN"
+                    onClick={() => setIsinOpen(true)}
+                    className="rounded-sm border border-rule px-2 py-2 text-xs text-ink-soft transition hover:border-olive hover:text-olive"
+                  >
+                    + ISIN
+                  </button>
+                )}
+              </Field>
+            )}
+            <Field
+              label="Cost (optional)"
+              htmlFor={costId}
+              rule="What it cost in all, in its currency. Left empty, the cost is unknown, and the P/L will not call a movement a profit."
+              ruleId={costRuleId}
+            >
+              <input
+                id={costId}
+                className={inputClass + " w-full"}
+                type="number"
+                step="0.01"
+                aria-describedby={costRuleId}
+                value={cost}
+                onChange={(e) => setCost(e.target.value)}
+              />
+            </Field>
+            {shows(group, "policy", distPolicy) && (
+              <Field label="Dividends" htmlFor={policyId}>
+                <select
+                  id={policyId}
+                  className={inputClass + " w-full"}
+                  value={distPolicy}
+                  onChange={(e) => setDistPolicy(e.target.value)}
+                >
+                  <option value="">from its history</option>
+                  <option value="acc">Accumulating</option>
+                  <option value="dist">Distributing</option>
+                </select>
+              </Field>
+            )}
+            <Field label="Entered as" htmlFor={modeId}>
+              <select
+                id={modeId}
+                className={inputClass + " w-full"}
+                value={mode}
+                onChange={(e) => setMode(e.target.value as "total" | "qty")}
+              >
+                <option value="total">Total</option>
+                <option value="qty">Units × price</option>
+              </select>
+            </Field>
+            {mode === "total" ? (
+              <Field
+                label="Value"
+                htmlFor={valueId}
+                rule={`→ units divides it by the ${day ? `close of ${day}` : "latest close"}, so the position prices itself from then on.`}
+                ruleId={valueRuleId}
+              >
+                <div className="flex gap-2">
+                  <input
+                    id={valueId}
+                    className={inputClass + " w-full min-w-0"}
+                    type="number"
+                    step="0.01"
+                    aria-describedby={valueRuleId}
+                    {...marks(needs, "value")}
+                    value={value}
+                    onChange={(e) => setValue(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    onClick={deriveQuantity}
+                    disabled={fetchingPrice || !symbol.trim() || !value}
+                    className="shrink-0 rounded-sm border border-rule px-2 py-2 text-xs text-ink-soft transition hover:border-olive hover:text-olive disabled:opacity-50"
+                  >
+                    {fetchingPrice ? "…" : "→ units"}
+                  </button>
+                </div>
+              </Field>
+            ) : (
+              <>
+                <Field label="Units" htmlFor={quantityId}>
+                  <input
+                    id={quantityId}
+                    className={inputClass + " w-full"}
+                    type="number"
+                    step="any"
+                    {...marks(needs, "quantity")}
+                    value={quantity}
+                    onChange={(e) => setQuantity(e.target.value)}
+                  />
+                </Field>
+                <Field label="Price" htmlFor={priceId}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      id={priceId}
+                      className={inputClass + " w-28 min-w-0"}
+                      type="number"
+                      step="0.01"
+                      {...marks(needs, "unitPrice")}
+                      value={unitPrice}
+                      onChange={(e) => setUnitPrice(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => fetchPrice(true)}
+                      disabled={fetchingPrice || !symbol.trim()}
+                      className="rounded-sm border border-rule px-2 py-2 text-xs text-ink-soft transition hover:border-up hover:text-up disabled:opacity-50"
+                    >
+                      {fetchingPrice ? "…" : day ? `↻ close of ${day}` : "↻ latest close"}
+                    </button>
+                    {computed != null && (
+                      <span className="text-xs text-ink-soft">= {money(currency).format(computed)}</span>
+                    )}
+                  </div>
+                </Field>
+              </>
+            )}
+            <Field
+              label="Currency"
+              htmlFor={currencyId}
+              rule={`The value, the price and the cost are in it. Proposed from the listing, or from this account's cash on ${snapshotDate}; what you type stays.`}
+              ruleId={currencyRuleId}
+            >
+              <input
+                id={currencyId}
+                className={inputClass + " w-full"}
+                list={CURRENCY_LIST}
+                aria-describedby={currencyRuleId}
+                value={currency}
+                onChange={(e) => setCurrencyChoice(e.target.value)}
+              />
+            </Field>
+            <div className="flex items-center gap-2 self-end">
+              <button className={btnClass} disabled={submitting}>
+                {submitting ? "..." : editId != null ? "Save" : "Add"}
+              </button>
+              {editId != null && <CancelButton onClick={reset} />}
+            </div>
+          </>
+        )}
+      </form>
+      {pickNote && <p className="mt-3 text-xs text-olive">{pickNote}</p>}
+      {priceNote && <p className="mt-3 text-xs text-up">{priceNote}</p>}
+      {error && <p className="mt-3 text-down">{error}</p>}
+    </div>
+  );
+}
+
+// What a holding's row says under its name.
+function holdingSubtitle(h: Holding): string | undefined {
+  const parts: string[] = [];
+  if (h.symbol) parts.push(h.symbol);
+  // The figure on the right is in the base. The arithmetic on the left is in
+  // whatever was typed, so it has to say so: "20 × 4.47" beside "€2" reads
+  // as a contradiction until it reads "20 × 4.47 TRY". A row with no
+  // multiplication to show names the typed amount instead, for the same
+  // reason — it is the only place the reader can still see what they entered.
+  const foreign =
+    h.currency && h.currency.toUpperCase() !== h.base_currency.toUpperCase() ? h.currency : null;
+  if (h.quantity != null && h.unit_price != null)
+    parts.push(`${h.quantity} × ${h.unit_price}${foreign ? ` ${foreign}` : ""}`);
+  else if (foreign && h.value != null)
+    parts.push(`${h.value.toLocaleString(locale, { maximumFractionDigits: 2 })} ${foreign}`);
+  // The stated policy, or, with none stated, when the holding last paid: its
+  // own history is what decides its dividends then (`dividendLine`).
+  const dividends = dividendWord(h.distribution_policy, h.last_dividend);
+  if (dividends) parts.push(dividends);
+  return parts.length ? parts.join(" · ") : undefined;
+}
+
+/* One group's rows: its name, its subtotal, and its holdings, each corrected
+   in the one form above. */
+function BucketList({
+  bucket,
+  holdings,
+  baseCurrency,
+  day,
+  onEdit,
+  onDeleted,
+  onChanged,
+}: {
+  bucket: Bucket;
+  holdings: Holding[];
+  /** The base the situation's converted figures are in, as declared. */
+  baseCurrency: string;
+  /** The situation's own day when it is a past one, null on today's. */
+  day: string | null;
+  onEdit: (h: Holding) => void;
+  onDeleted: (h: Holding) => void;
+  onChanged: () => Promise<void> | void;
+}) {
+  const [refreshingId, setRefreshingId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // Converted rows only — see the situation's total, one component up.
+  const subtotal = holdings.reduce((acc, h) => acc + h.value_base, 0);
+
+  async function remove(h: Holding) {
+    if (!window.confirm(`Remove "${h.asset_name}"?`)) return;
+    setError(null);
+    try {
+      await deleteHolding(h.id);
+      onDeleted(h);
+      await onChanged();
+    } catch (err) {
+      setError(apiError(err, "Delete failed."));
+    }
+  }
+
   async function refreshRow(h: Holding) {
     setRefreshingId(h.id);
     setError(null);
@@ -1238,201 +1664,31 @@ function BucketSection({
     }
   }
 
-  function holdingSubtitle(h: Holding): string | undefined {
-    const parts: string[] = [];
-    if (h.symbol) parts.push(h.symbol);
-    // The figure on the right is in the base. The arithmetic on the left is in
-    // whatever was typed, so it has to say so: "20 × 4.47" beside "€2" reads
-    // as a contradiction until it reads "20 × 4.47 TRY". A row with no
-    // multiplication to show names the typed amount instead, for the same
-    // reason — it is the only place the reader can still see what they entered.
-    const foreign =
-      h.currency && h.currency.toUpperCase() !== h.base_currency.toUpperCase() ? h.currency : null;
-    if (h.quantity != null && h.unit_price != null)
-      parts.push(`${h.quantity} × ${h.unit_price}${foreign ? ` ${foreign}` : ""}`);
-    else if (foreign && h.value != null)
-      parts.push(`${h.value.toLocaleString(locale, { maximumFractionDigits: 2 })} ${foreign}`);
-    // The stated policy, or, with none stated, when the holding last paid: its
-    // own history is what decides its dividends then (`dividendLine`).
-    const dividends = dividendWord(h.distribution_policy, h.last_dividend);
-    if (dividends) parts.push(dividends);
-    return parts.length ? parts.join(" · ") : undefined;
-  }
-
   return (
     <section className={cardClass + " p-4"}>
       <div className="mb-3 flex items-baseline justify-between">
         <h3 className="text-sm font-semibold text-ink">{bucket.label}</h3>
         <span className="text-sm font-medium text-ink-soft">{money(baseCurrency).format(subtotal)}</span>
       </div>
-
-      <form onSubmit={submit} className="mb-3 flex flex-wrap items-center gap-2">
-        {/* The name field IS the catalogue search. Picking fills the fields
-            that otherwise stay empty and switch features off in silence — the
-            ISIN the look-through needs, and the acc/dist that decides whether
-            dividends are ever collected. It fills identity only: the ticker
-            and the currency stay as typed, because the catalogue's belong to a
-            different listing. */}
-        <InstrumentPicker
-          value={name}
-          onChange={setName}
-          mark={marks(needs, "name")}
-          onPick={(c) => {
-            setName(c.name);
-            if (c.source === "catalogue") {
-              setIsin(c.isin);
-              if (c.distribution_policy) setDistPolicy(c.distribution_policy);
-              setPickNote(
-                [c.isin, policyWord(c.distribution_policy)].filter(Boolean).join(" · ") +
-                  " from the catalogue. The ticker is still yours to give: this fund" +
-                  " trades under a different symbol on each exchange.",
-              );
-              return;
-            }
-            // The other two lanes fill the SYMBOL, which is the half the
-            // catalogue cannot give — and no ISIN, which is the half Yahoo
-            // does not have. Then the existing check runs, because a symbol is
-            // only confirmed by a quote coming back with a currency and a name.
-            setSymbol(c.symbol);
-            setPickNote(
-              c.source === "owned"
-                ? `${c.symbol}: the symbol already on your position${
-                    c.institution ? ` at ${c.institution}` : ""
-                  }.`
-                : `${c.symbol} on ${c.exchange ?? "its exchange"}: checking what it prices…`,
-            );
-            void fetchPrice(true);
-          }}
-        />
-        <input
-          className={inputClass + " w-44"}
-          placeholder="Ticker or ISIN"
-          aria-label="Ticker or ISIN"
-          aria-describedby={tickerCost ? tickerCostId : undefined}
-          title="Yahoo ticker WITH the exchange suffix (VWCE.MI = Borsa Italiana, SAP.DE = Xetra, no suffix = US, BTC-EUR = crypto). A bare ticker like 'VWCE' won't match. An ISIN (e.g. IE00BK5BQT80) works too. Prefer a EUR listing so prices need no FX conversion."
-          value={symbol}
-          onChange={(e) => setSymbol(e.target.value)}
-          onBlur={() => {
-            if (symbol.trim()) void fetchPrice(false);
-          }}
-        />
-        {isinShown ? (
-          <input
-            className={inputClass + " w-40"}
-            placeholder="ISIN (optional)"
-            aria-label="ISIN"
-            autoFocus={isinOpen}
-            title="The fund's ISIN. The ticker prices the position; the ISIN is what the look-through sources use to see inside it: the same fund has a different ticker on each exchange, so one field cannot do both."
-            value={isin}
-            onChange={(e) => setIsin(e.target.value)}
-          />
-        ) : (
-          <button
-            type="button"
-            aria-expanded={false}
-            aria-label="Add the fund's ISIN"
-            onClick={() => setIsinOpen(true)}
-            className="rounded-sm border border-rule px-2 py-2 text-xs text-ink-soft transition hover:border-olive hover:text-olive"
-          >
-            + ISIN
-          </button>
-        )}
-        <input
-          className={inputClass + " w-36"}
-          type="number"
-          step="0.01"
-          placeholder="cost (optional)"
-          aria-label="Cost"
-          title="What this position cost you in total, in its own currency. Leave it empty if you do not know: an empty cost reads as 'cost unknown', which is true, whereas a guess would let the P/L present a movement as a profit."
-          value={cost}
-          onChange={(e) => setCost(e.target.value)}
-        />
-        <select className={inputClass} aria-label="Dividend policy" value={distPolicy} onChange={(e) => setDistPolicy(e.target.value)} title="From its history: the app reads this holding's dividends on Yahoo once a day and credits each one to this institution's cash, which is how a share works. Distributing: the same, as you or the catalogue stated it. Accumulating: no dividend is recorded (a fund that reinvests them).">
-          <option value="">from its history</option>
-          <option value="acc">Accumulating</option>
-          <option value="dist">Distributing</option>
-        </select>
-        <select className={inputClass} aria-label="How this position is entered" value={mode} onChange={(e) => setMode(e.target.value as "total" | "qty")}>
-          <option value="total">Total</option>
-          <option value="qty">Qty × price</option>
-        </select>
-        {mode === "total" ? (
-          <>
-            <input className={inputClass + " w-32"} type="number" step="0.01" aria-label="Value" {...marks(needs, "value")} value={value} onChange={(e) => setValue(e.target.value)} />
-            <button
-              type="button"
-              onClick={deriveQuantity}
-              disabled={fetchingPrice || !symbol.trim() || !value}
-              title="Work out how many units that value is, at this instrument's price, so the position starts pricing itself instead of staying a number you have to maintain"
-              className="rounded-sm border border-rule px-2 py-2 text-xs text-ink-soft transition hover:border-olive hover:text-olive disabled:opacity-50"
-            >
-              {fetchingPrice ? "…" : "→ units"}
-            </button>
-          </>
-        ) : (
-          <>
-            <input className={inputClass + " w-24"} type="number" step="any" aria-label="Quantity" {...marks(needs, "quantity")} value={quantity} onChange={(e) => setQuantity(e.target.value)} />
-            <span className="text-ink-faint">×</span>
-            <input className={inputClass + " w-28"} type="number" step="0.01" aria-label="Price" {...marks(needs, "unitPrice")} value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} />
-            <button
-              type="button"
-              onClick={() => fetchPrice(true)}
-              disabled={fetchingPrice || !symbol.trim()}
-              title={
-                day
-                  ? `Fetch this ticker's close of ${day}, the day this situation describes`
-                  : "Fetch the latest market price for this ticker"
-              }
-              className="rounded-sm border border-rule px-2 py-2 text-xs text-ink-soft transition hover:border-up hover:text-up disabled:opacity-50"
-            >
-              {fetchingPrice ? "…" : day ? `↻ close of ${day}` : "↻ live"}
-            </button>
-            {computed != null && (
-              <span className="text-xs text-ink-soft">= {money(currency).format(computed)}</span>
-            )}
-          </>
-        )}
-        <input
-          className={inputClass + " w-20"}
-          placeholder="currency"
-          aria-label="Currency"
-          list={CURRENCY_LIST}
-          title="The currency the value, the price and the cost are in. Proposed from the listing when its currency is known, otherwise from the account's anchor on this situation's date; change it and it stays as you typed it."
-          value={currency}
-          onChange={(e) => setCurrencyChoice(e.target.value)}
-        />
-        <button className={btnClass} disabled={submitting}>{submitting ? "..." : editId != null ? "Save" : "Add"}</button>
-        {editId != null && <CancelButton onClick={reset} />}
-      </form>
-
-      {tickerCost && (
-        <p id={tickerCostId} className="mb-2 text-xs text-ink-soft">
-          {tickerCost}
-        </p>
-      )}
-      {pickNote && <p className="mb-2 text-xs text-olive">{pickNote}</p>}
-      {priceNote && <p className="mb-2 text-xs text-up">{priceNote}</p>}
       {error && <p className="mb-2 text-down">{error}</p>}
-      {holdings.length > 0 && (
-        <ul className="divide-y divide-hair rounded-sm border border-hair">
-          {holdings.map((h) => (
-            <Row
-              key={h.id}
-              onEdit={() => startEdit(h)}
-              onDelete={() => remove(h)}
-              // Today's situation only. The ↻ stores the latest close as the
-              // row's price and leaves its value as recorded (measured, brief
-              // AU), so on a past situation it put a later day's close beside
-              // that day's value.
-              onRefresh={h.symbol && !day ? () => refreshRow(h) : undefined}
-              refreshing={refreshingId === h.id}
-              title={h.asset_name}
-              subtitle={holdingSubtitle(h)}
-              value={h.value != null ? money(h.base_currency).format(h.value_base) : undefined}
-            />
-          ))}
-        </ul>
-      )}
+      <ul className="divide-y divide-hair rounded-sm border border-hair">
+        {holdings.map((h) => (
+          <Row
+            key={h.id}
+            onEdit={() => onEdit(h)}
+            onDelete={() => remove(h)}
+            // Today's situation only. The ↻ stores the latest close as the
+            // row's price and leaves its value as recorded (measured, brief
+            // AU), so on a past situation it put a later day's close beside
+            // that day's value.
+            onRefresh={h.symbol && !day ? () => refreshRow(h) : undefined}
+            refreshing={refreshingId === h.id}
+            title={h.asset_name}
+            subtitle={holdingSubtitle(h)}
+            value={h.value != null ? money(h.base_currency).format(h.value_base) : undefined}
+          />
+        ))}
+      </ul>
     </section>
   );
 }

@@ -101,6 +101,8 @@ export function InstrumentPicker({
   placeholder = "Name (type to search)",
   label = "Asset name",
   mark,
+  id,
+  wide = false,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -114,13 +116,17 @@ export function InstrumentPicker({
   owned?: { symbol: string; name: string; institution?: string | null }[];
   placeholder?: string;
   /** What this box IS, as its programmatic name. The placeholder cannot do
-      that job: it is the box's only name today, and it disappears the moment
-      the reader types into it. Measured on the situation form, where nothing
-      carries a `<label>` or an `aria-label` at all. */
+      that job: it disappears the moment the reader types into it. Found on
+      the situation form when nothing there carried a `<label>` or an
+      `aria-label`; that form now shows a label with the same word. */
   label?: string;
   /** Marks the box as needed (see required.ts): aria-required, and the
       question its empty box asks in place of the placeholder. */
   mark?: { "aria-required"?: true; placeholder?: string };
+  /** The box's id, for a visible `<label>` that names it. */
+  id?: string;
+  /** As wide as what holds it, as in the situation's form, rather than 18rem. */
+  wide?: boolean;
 }) {
   const [result, setResult] = useState<InstrumentSearch | null>(null);
   const [live, setLive] = useState<SymbolLookup | null>(null);
@@ -229,7 +235,8 @@ export function InstrumentPicker({
   return (
     <div ref={box} className="relative max-w-full">
       <input
-        className={inputClass + " w-72"}
+        id={id}
+        className={inputClass + (wide ? " w-full" : " w-72")}
         placeholder={placeholder}
         aria-label={label}
         {...mark}
