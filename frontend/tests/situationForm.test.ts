@@ -10,7 +10,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { HoldingCreate } from "../src/api/holdings";
 import { BUCKETS, classOnSave, type Bucket } from "../src/components/buckets.ts";
-import { holdingPayload, offers, shows, type Draft } from "../src/components/situationForm.ts";
+import {
+  costChanged,
+  costCovers,
+  holdingPayload,
+  offers,
+  shows,
+  unitsBelowCost,
+  type Draft,
+} from "../src/components/situationForm.ts";
 
 const group = (label: string): Bucket => BUCKETS.find((b) => b.label === label)!;
 const STOCKS = group("Stocks & ETF");
@@ -200,4 +208,57 @@ test("every group, both ways of entering, new and edited: the same request, byte
     }
   }
   assert.equal(compared, 90);
+});
+
+// --- Brief AV: a cost that paid for some of the units ---------------------------
+
+const CARRIED = { asset_class: "fund_etf", cost_basis: 300, cost_quantity: 3 };
+const carried = (over: Partial<Draft> = {}) =>
+  draft({ name: "Fondo Alfa", symbol: "ALFA.MI", mode: "qty", quantity: "13", unitPrice: "110", cost: "300", ...over });
+
+test("a cost left as loaded keeps the units it paid for, by not being sent", () => {
+  const sent = holdingPayload(carried({ unitPrice: "112" }), STOCKS, CARRIED);
+  assert.equal("cost_quantity" in sent, false);
+  assert.equal(sent.cost_basis, 300);
+  assert.equal("cost_quantity" in holdingPayload(carried({ cost: "300.00" }), STOCKS, CARRIED), false,
+    "300.00 typed over 300 is the same cost");
+});
+
+test("a cost the reader types covers every unit, and an emptied box clears it", () => {
+  assert.equal(holdingPayload(carried({ cost: "1250" }), STOCKS, CARRIED).cost_quantity, null);
+  const cleared = holdingPayload(carried({ cost: "" }), STOCKS, CARRIED);
+  assert.equal(cleared.cost_basis, null);
+  assert.equal(cleared.cost_quantity, null);
+});
+
+test("a new row, or an edit loaded with no cost known, sends no count of units", () => {
+  assert.equal("cost_quantity" in holdingPayload(carried(), STOCKS, null), false);
+  assert.equal("cost_quantity" in holdingPayload(carried(), STOCKS, { asset_class: "fund_etf" }), false);
+  assert.equal(costChanged("300", { asset_class: null }), false);
+  assert.equal(costChanged("300", { cost_basis: null }), true);
+});
+
+test("under the cost: what it paid for, what the rest is, how to make it all a cost", () => {
+  assert.equal(
+    costCovers(carried(), CARRIED),
+    "Paid for 3 of the 13 units: the other 10 are this situation's value, with no cost recorded. Type what all 13 cost to make it all a cost.",
+  );
+  assert.equal(costCovers(carried({ cost: "1250" }), CARRIED), null, "a typed cost covers them all");
+  assert.equal(costCovers(carried(), { ...CARRIED, cost_quantity: null }), null);
+  assert.equal(costCovers(carried({ quantity: "2" }), CARRIED), null, "said under the units instead");
+});
+
+test("units typed below what the cost paid for are refused under the field, in the backend's words", () => {
+  assert.equal(
+    unitsBelowCost(carried({ quantity: "2" }), CARRIED),
+    "This cost paid for 3 units, more than the 2 typed here. Type what the units you hold cost, or keep at least 3.",
+  );
+  assert.equal(
+    unitsBelowCost(carried({ mode: "total", value: "1430" }), CARRIED),
+    "This cost paid for 3 units, and a row entered as a total has none. Type what the whole position cost, or keep it in units and a price.",
+  );
+  assert.equal(unitsBelowCost(carried({ quantity: "3" }), CARRIED), null, "3 of 3 is all of them");
+  assert.equal(unitsBelowCost(carried({ quantity: "2", cost: "200" }), CARRIED), null,
+    "a cost the reader typed covers the units they typed");
+  assert.equal(unitsBelowCost(carried({ quantity: "" }), CARRIED), null, "the missing units are another refusal");
 });

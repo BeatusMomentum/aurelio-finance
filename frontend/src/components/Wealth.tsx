@@ -74,7 +74,8 @@ import { dayCount, daysAgo } from "./calendarDays";
 import { closeTooFar } from "./closeGap";
 import { dividendWord } from "./dividendLine";
 import { priceDay } from "./priceDay";
-import { holdingPayload, offers, shows } from "./situationForm";
+import { costCovers, holdingPayload, offers, shows, unitsBelowCost } from "./situationForm";
+import { prefillWords } from "./prefillNote";
 
 // The occasional, destructive twin of a primary action: same size, same
 // shape, warning colour. `btnClass` is for the action you take every time;
@@ -673,11 +674,8 @@ They will be reported as unaccounted for, not removed in silence.
       const s = await createPrefilledSnapshot(institution.id, {
         date,
       });
-      setPrefillNote(
-        s.needs_attention.length
-          ? `Copied from ${s.copied_from}. ${s.repriced.length} priced from the market. Only ${s.needs_attention.join(", ")} still needs you.`
-          : `Copied from ${s.copied_from}, all ${s.repriced.length} positions priced from the market.`,
-      );
+      // And what it could not keep of a cost paid (prefillNote.ts).
+      setPrefillNote(prefillWords(s));
     } catch (err) {
       setFormError(apiError(err, "Could not start from the previous situation."));
     } finally {
@@ -1057,6 +1055,12 @@ function PositionForm({
   // The class of the row being edited, kept as it was: a group shows more than
   // one class, and saving must not rename a `fund_etf` to the group's `equity`.
   const [editClass, setEditClass] = useState<string | null>(null);
+  // The cost the row was loaded with, and the units it paid for (brief AV):
+  // a cost left as it was keeps them; one the reader types covers every unit.
+  const [editCost, setEditCost] = useState<{ basis: number | null; units: number | null }>({
+    basis: null,
+    units: null,
+  });
   const [name, setName] = useState("");
   const [symbol, setSymbol] = useState("");
   const [isin, setIsin] = useState("");
@@ -1102,6 +1106,7 @@ function PositionForm({
   const valueId = useId();
   const valueRuleId = useId();
   const quantityId = useId();
+  const quantityRuleId = useId();
   const priceId = useId();
   const currencyId = useId();
   const currencyRuleId = useId();
@@ -1111,7 +1116,15 @@ function PositionForm({
     listingCurrencyOf({ ...listing, ...learned }, symbol) ??
     accountCurrency ??
     baseCurrency;
-  const editing = editId != null ? { asset_class: editClass } : null;
+  const editing =
+    editId != null
+      ? { asset_class: editClass, cost_basis: editCost.basis, cost_quantity: editCost.units }
+      : null;
+  const draft = { name, symbol, isin, cost, policy: distPolicy, mode, value, quantity, unitPrice, currency };
+  // What the cost as loaded paid for, said under it; and the sentence under
+  // the units when they would fall below it (situationForm.ts).
+  const covers = costCovers(draft, editing);
+  const below = unitsBelowCost(draft, editing);
   // What leaving the ticker empty costs this row as it stands (absentTicker.ts):
   // said under the ticker, with its rule, while the row is written, and read
   // with its box.
@@ -1134,6 +1147,7 @@ function PositionForm({
   function reset() {
     setEditId(null);
     setEditClass(null);
+    setEditCost({ basis: null, units: null });
     setName("");
     setSymbol("");
     setIsin("");
@@ -1158,6 +1172,7 @@ function PositionForm({
     setIsin(h.isin ?? "");
     setIsinOpen(false);
     setCost(h.cost_basis != null ? String(h.cost_basis) : "");
+    setEditCost({ basis: h.cost_basis ?? null, units: h.cost_quantity ?? null });
     setDistPolicy(h.distribution_policy ?? "");
     // A stored position's currency is what it says, not a proposal.
     setCurrencyChoice(h.currency);
@@ -1199,11 +1214,10 @@ function PositionForm({
       setError(refused);
       return;
     }
-    const payload = holdingPayload(
-      { name, symbol, isin, cost, policy: distPolicy, mode, value, quantity, unitPrice, currency },
-      group,
-      editing,
-    );
+    // Said under the field already; the backend would refuse it in the same
+    // words (brief AV).
+    if (below) return;
+    const payload = holdingPayload(draft, group, editing);
     setSubmitting(true);
     setError(null);
     try {
@@ -1456,7 +1470,13 @@ function PositionForm({
             <Field
               label="Cost (optional)"
               htmlFor={costId}
-              rule="What it cost in all, in its currency. Left empty, the cost is unknown, and the P/L will not call a movement a profit."
+              rule={
+                <>
+                  What it cost in all, in its currency. Left empty, the cost is unknown, and the P/L
+                  will not call a movement a profit.
+                  {covers && <span className="mt-1 block text-ink-soft">{covers}</span>}
+                </>
+              }
               ruleId={costRuleId}
             >
               <input
@@ -1498,7 +1518,12 @@ function PositionForm({
               <Field
                 label="Value"
                 htmlFor={valueId}
-                rule={`→ units divides it by the ${day ? `close of ${day}` : "latest close"}, so the position prices itself from then on.`}
+                rule={
+                  <>
+                    {`→ units divides it by the ${day ? `close of ${day}` : "latest close"}, so the position prices itself from then on.`}
+                    {below && <span className="mt-1 block text-down">{below}</span>}
+                  </>
+                }
                 ruleId={valueRuleId}
               >
                 <div className="flex gap-2">
@@ -1524,13 +1549,20 @@ function PositionForm({
               </Field>
             ) : (
               <>
-                <Field label="Units" htmlFor={quantityId}>
+                <Field
+                  label="Units"
+                  htmlFor={quantityId}
+                  rule={below && <span className="text-down">{below}</span>}
+                  ruleId={quantityRuleId}
+                >
                   <input
                     id={quantityId}
                     className={inputClass + " w-full"}
                     type="number"
                     step="any"
                     {...marks(needs, "quantity")}
+                    aria-invalid={below ? true : undefined}
+                    aria-describedby={below ? quantityRuleId : undefined}
                     value={quantity}
                     onChange={(e) => setQuantity(e.target.value)}
                   />

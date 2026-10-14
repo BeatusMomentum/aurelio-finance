@@ -616,25 +616,42 @@ def project(
                 if h.cost_basis is not None
                 else None
             )
-            book = recorded_cost if recorded_cost is not None else from_photo
-            cost_known_from_photo = recorded_cost is not None
+            # A cost that paid for only some of the units (`cost_quantity`,
+            # brief AV): what a new situation started from the last writes on
+            # a row partly bought since the one before. Those units open at
+            # that cost, the others at the photograph's value.
+            covered = (
+                h.cost_quantity
+                if (recorded_cost is not None and h.cost_quantity is not None and h.quantity
+                    and h.cost_quantity < h.quantity and from_photo != 0)
+                else None
+            )
+            if covered is not None:
+                book = recorded_cost + from_photo * (h.quantity - covered) / h.quantity
+            else:
+                book = recorded_cost if recorded_cost is not None else from_photo
+            cost_known_from_photo = recorded_cost is not None and covered is None
             realized = movement = dividends = dividends_estimated = 0.0
             # True once a recorded purchase contributes to the book: only then
             # is "average cost" a price actually paid rather than the price at
             # which a snapshot happened to be taken.
             cost_known = cost_known_from_photo
-            cost_estimated = bool(h.cost_estimated) if cost_known_from_photo else False
+            cost_estimated = bool(h.cost_estimated) if recorded_cost is not None else False
             closed_on: str | None = None
             # What of that book was PAID, and for how many units (brief AV):
-            # all of it where a cost is recorded, none where the book is a
-            # photograph's value. A photograph that recorded no value and no
-            # cost puts its units in the paid pool at zero, which is how they
-            # have always been read (as costing nothing, and cost_known once a
-            # buy joins them): kept as it was, and filed under STILL OPEN.
-            if recorded_cost is not None or from_photo == 0:
+            # all of it where a cost is recorded, the part its units cover
+            # where it says so, none where the book is a photograph's value. A
+            # photograph that recorded no value and no cost puts its units in
+            # the paid pool at zero, which is how they have always been read
+            # (as costing nothing, and cost_known once a buy joins them): kept
+            # as it was, and filed under STILL OPEN.
+            if covered is not None:
+                paid, units_paid = recorded_cost, covered
+            elif recorded_cost is not None or from_photo == 0:
                 paid, units_paid = recorded_cost or 0.0, h.quantity
             else:
                 paid, units_paid = 0.0, (None if h.quantity is None else 0.0)
+            opening = book
 
             closes = _closes(inst_id, h, snap.date)
             if h.symbol and h.quantity is not None:
@@ -651,9 +668,9 @@ def project(
                 # A recorded cost is the basis when there is one (the same
                 # figure read above, for every photographed row). Otherwise the
                 # photograph's value stands in — and then it is NOT a cost, and
-                # the row says so.
+                # the row says so; where the cost paid for some of the units,
+                # both, each for its own units (`opening`).
                 recorded = recorded_cost
-                opening = recorded if recorded is not None else from_photo
                 walked = replay(
                     later,
                     start_qty=h.quantity,
@@ -697,8 +714,10 @@ def project(
                 # the whole position came from the ledger. One buy on top of a
                 # photograph is not enough — that basis is a blend, and letting
                 # a blend claim to be a cost is how a mostly-invented figure
-                # starts presenting itself as profit.
-                cost_known = recorded is not None or (
+                # starts presenting itself as profit. A cost recorded for some
+                # of the units only is not either; `book_paid` says how much
+                # of the book was paid (brief AV).
+                cost_known = cost_known_from_photo or (
                     from_photo == 0 and any(t.kind == "buy" for t in later)
                 )
                 # And estimated when any unit behind the part PAID is: the

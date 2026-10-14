@@ -625,6 +625,8 @@ export interface paths {
         /**
          * Update Holding
          * @description Update a holding (value recomputed from quantity*price if not given).
+         *     A cost left as it was keeps the units it paid for, so units typed below
+         *     them are refused with a sentence (brief AV).
          */
         put: operations["update_holding_api_holdings__holding_id__put"];
         post?: never;
@@ -3264,6 +3266,11 @@ export interface components {
              */
             cost_estimated?: boolean | null;
             /**
+             * Cost Quantity
+             * @description How many of the row's units `cost_basis` paid for, when not all of them: a new situation started from the last writes it for a row partly bought since the previous one, the other units being the situation's value. Null means the cost covers every unit. Needs a cost and a quantity, and no more than the quantity.
+             */
+            cost_quantity?: number | null;
+            /**
              * Currency
              * @description Currency, e.g. EUR
              */
@@ -3328,6 +3335,11 @@ export interface components {
              * @description True when the cost was derived (e.g. from a reported % return)
              */
             cost_estimated: boolean | null;
+            /**
+             * Cost Quantity
+             * @description How many of the row's units `cost_basis` paid for, when not all of them: a new situation started from the last writes it for a row partly bought since the previous one, the other units being the situation's value. Null means the cost covers every unit. Needs a cost and a quantity, and no more than the quantity.
+             */
+            cost_quantity: number | null;
             /**
              * Currency
              * @description Currency, e.g. EUR
@@ -3850,6 +3862,20 @@ export interface components {
             pct: number;
         };
         /**
+         * PaidNotKept
+         * @description A row whose paid part a new situation started from the last could not
+         *     keep, because nothing priced the row on that day (brief AV).
+         */
+        PaidNotKept: {
+            /** Asset Name */
+            asset_name: string;
+            /**
+             * Units Paid
+             * @description The units that paid part had bought
+             */
+            units_paid: number;
+        };
+        /**
          * PlanTargetRead
          * @description A stored plan target as returned by the API.
          */
@@ -4236,6 +4262,11 @@ export interface components {
              * @description Free-form notes
              */
             note: string | null;
+            /**
+             * Paid Not Kept
+             * @description Of those rows, the ones partly bought since the situation it started from whose paid part the new one could not keep, with the units it had paid for: nothing priced them on that day (brief AV).
+             */
+            paid_not_kept: components["schemas"]["PaidNotKept"][];
             /**
              * Repriced
              * @description Tickers valued at the new date

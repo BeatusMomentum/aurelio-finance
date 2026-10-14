@@ -234,8 +234,20 @@ def _holding(h: models.Holding) -> str:
     if h.cost_basis is None:
         parts.append("cost unknown")
     else:
+        # A cost that paid for some of the units says which part (brief AV):
+        # "cost 300.00" beside 13 units read as the price of all of them.
+        partial = (
+            h.cost_quantity is not None and h.quantity is not None
+            and h.cost_quantity < h.quantity
+        )
         parts.append(
-            f"cost {h.cost_basis:.2f} {h.currency}" + (" (estimated)" if h.cost_estimated else "")
+            f"cost {h.cost_basis:.2f} {h.currency}"
+            + (
+                f" for {h.cost_quantity:g} of the {h.quantity:g} units (the others are this "
+                "situation's value, no cost recorded)"
+                if partial else ""
+            )
+            + (" (estimated)" if h.cost_estimated else "")
         )
     if h.distribution_policy:
         parts.append(schemas.POLICY_WORDS.get(h.distribution_policy, h.distribution_policy))

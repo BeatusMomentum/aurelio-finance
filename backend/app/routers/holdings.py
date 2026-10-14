@@ -6,7 +6,7 @@ snapshot. Before operating we check that the snapshot exists (otherwise 404).
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app import crud, models, schemas
@@ -14,6 +14,12 @@ from app.database import get_db
 from app.routers.deps import get_or_404, holding_read, holding_reads
 
 router = APIRouter(prefix="/api", tags=["holdings"])
+
+
+def _refused(exc: crud.HoldingCostRefused) -> HTTPException:
+    """A cost that pays for more units than the row holds: a 422 whose detail
+    is the sentence, which the form shows as written (brief AV)."""
+    return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc))
 
 
 @router.post(
@@ -28,7 +34,10 @@ def create_holding(
 ) -> schemas.HoldingRead:
     """Add a holding to the given snapshot."""
     get_or_404(db, models.Snapshot, snapshot_id)
-    return holding_read(db, crud.create_holding(db, snapshot_id, payload))
+    try:
+        return holding_read(db, crud.create_holding(db, snapshot_id, payload))
+    except crud.HoldingCostRefused as exc:
+        raise _refused(exc)
 
 
 @router.get(
@@ -59,9 +68,14 @@ def update_holding(
     payload: schemas.HoldingCreate,
     db: Session = Depends(get_db),
 ) -> schemas.HoldingRead:
-    """Update a holding (value recomputed from quantity*price if not given)."""
+    """Update a holding (value recomputed from quantity*price if not given).
+    A cost left as it was keeps the units it paid for, so units typed below
+    them are refused with a sentence (brief AV)."""
     get_or_404(db, models.Holding, holding_id)
-    return holding_read(db, crud.update_holding(db, holding_id, payload))
+    try:
+        return holding_read(db, crud.update_holding(db, holding_id, payload))
+    except crud.HoldingCostRefused as exc:
+        raise _refused(exc)
 
 
 @router.delete("/holdings/{holding_id}", status_code=status.HTTP_204_NO_CONTENT)

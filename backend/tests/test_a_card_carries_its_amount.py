@@ -284,7 +284,9 @@ def test_the_migration_adds_the_amounts_and_keeps_every_line_as_it_was(before_th
 
     database.init_db()
 
-    copies = list(path.parent.glob("data.db.bak-*-before-migration-e62c6f6c8060-to-491fe57d31db"))
+    # "-to-*": the copy names the head the app migrates to, which a later
+    # migration moves (brief AV's did).
+    copies = list(path.parent.glob("data.db.bak-*-before-migration-e62c6f6c8060-to-*"))
     assert len(copies) == 1, "the app copied the file before migrating it"
     with closing(sqlite3.connect(path)) as conn, conn:
         assert conn.execute(then).fetchall() == before

@@ -195,6 +195,12 @@ class Holding(Base):
     # a broker's reported % return, say) rather than read off a contract note.
     cost_basis: Mapped[float | None] = mapped_column(Float, nullable=True)
     cost_estimated: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # How many of the row's units `cost_basis` paid for, when not all of them
+    # (brief AV): a new situation started from the last keeps what the buys
+    # since the previous one paid, and the units they bought; the other units
+    # are the photograph's, at its value. Null means the cost covers every unit,
+    # which is what a cost typed by the reader says.
+    cost_quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
     currency: Mapped[str] = mapped_column(String, nullable=False)
     # acc | dist — distributing pays dividends to cash; accumulating reinvests.
     # Empty: the ticker's own dividend history decides (pac._follows_dividends).

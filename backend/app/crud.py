@@ -310,7 +310,12 @@ def clone_latest_snapshot(
     The cost is written ONLY where the projection knows it is one
     (`cost_known`). Where it does not, the projected book is a blend of a
     photograph's value and later purchases, and this app does not call a blend
-    a cost — the new photograph then carries no cost rather than invent one.
+    a cost. It used to carry no cost at all then, so what the purchases paid
+    was folded into the new photograph's value and nothing could read it back
+    (brief AV, measured: 300.00 paid on a row of 1,300.00, then none). The new
+    row now keeps the part paid, as its cost, with the units it paid for
+    (`cost_quantity`); the rest is the photograph's value, which the row's own
+    value restates.
 
     Everything the projection computes is in the base currency, while a photograph is
     written in whatever the row is denominated in. The figures are converted
@@ -318,9 +323,11 @@ def clone_latest_snapshot(
     second time and the position would shrink by the exchange rate every time
     a situation was recorded.
 
-    Returns (snapshot, opaque) where `opaque` names the rows nothing could
-    re-price — the ones actually needing the user's attention. None if the
-    institution has no snapshot to clone."""
+    Returns (snapshot, opaque, unkept) where `opaque` names the rows nothing
+    could re-price (the ones actually needing the user's attention) and
+    `unkept` the ones among them whose paid part was not kept, with the units
+    it had paid for, so the page can say so. None if the institution has no
+    snapshot to clone."""
     source = latest_snapshot_for_institution(
         db, institution_id, on_or_before=dated.today()
     )
@@ -359,6 +366,7 @@ def clone_latest_snapshot(
     )
 
     opaque: list[str] = []
+    unkept: list[tuple[str, float]] = []
     for p in projected:
         qty = p.quantity
         if qty is not None and qty <= 0:
@@ -410,18 +418,41 @@ def clone_latest_snapshot(
                 currency = src.currency if src is not None else conv.base
             opaque.append(p.asset_name)
 
-        # The cost, and only where it IS one.
+        # The cost, and only where it IS one: all of the book where all of it
+        # was paid; where only part was, that part and the units it paid for
+        # (brief AV). The photograph's value of the rest is no cost, and the
+        # new row's value already says what those units are worth.
+        kept = (
+            (src.cost_basis, src.cost_estimated, src.cost_quantity)
+            if src is not None
+            else (None, None, None)
+        )
         if not moved:
-            cost_basis = src.cost_basis if src is not None else None
-            cost_estimated = src.cost_estimated if src is not None else None
+            cost_basis, cost_estimated, cost_quantity = kept
         elif p.cost_known:
             cost_basis = conv.from_base(p.book_value, row_ccy)
-            cost_estimated = p.cost_estimated
+            cost_estimated, cost_quantity = p.cost_estimated, None
             if cost_basis is None:  # no rate: keep what the photograph knew
-                cost_basis = src.cost_basis if src is not None else None
-                cost_estimated = src.cost_estimated if src is not None else None
+                cost_basis, cost_estimated, cost_quantity = kept
+        elif p.book_paid > 0 and p.units_paid and quote is not None and qty is not None:
+            # Only on a row the market re-priced: every unit then has the same
+            # price in the new row, and the units the cost does not cover open
+            # at it. A row nothing could re-price is written at the projection's
+            # average (photograph and purchases together), and splitting that
+            # one price between the two would move money between them: an
+            # invented fund photographed at 10 x 100, with 5 bought at 120,
+            # would open at a book of 1,666.67 beside a value of 1,600.00. Such
+            # a row is named as needing the reader, and carries no cost, as
+            # before (brief AV); `unkept` says what it paid for, so the page
+            # tells the reader the part paid is gone from it.
+            cost_basis = conv.from_base(p.book_paid, row_ccy)
+            cost_estimated, cost_quantity = p.cost_estimated, p.units_paid
+            if cost_basis is None:
+                cost_basis, cost_estimated, cost_quantity = kept
         else:
-            cost_basis = cost_estimated = None
+            if p.book_paid > 0 and p.units_paid:
+                unkept.append((p.asset_name, p.units_paid))
+            cost_basis = cost_estimated = cost_quantity = None
         db.add(
             models.Holding(
                 snapshot_id=snapshot.id,
@@ -440,13 +471,14 @@ def clone_latest_snapshot(
                 # cost of every purchase since — once it has.
                 cost_basis=cost_basis,
                 cost_estimated=cost_estimated,
+                cost_quantity=cost_quantity,
                 currency=currency,
                 distribution_policy=p.distribution_policy,
             )
         )
     commit(db)
     db.refresh(snapshot)
-    return snapshot, opaque
+    return snapshot, opaque, unkept
 
 
 # --- Holdings -------------------------------------------------------------
@@ -460,13 +492,47 @@ def _clean_isin(raw: str | None) -> str | None:
     return cleaned or None
 
 
+class HoldingCostRefused(ValueError):
+    """A cost that says it paid for more units than the row holds, or for
+    units of a row that has none. Refused in the reader's words."""
+
+
+def _units_paid_for(row: dict) -> None:
+    """Refuse a row whose cost says it paid for units it cannot cover.
+
+    Read on the row as the request LEAVES it: an edit that changes the units
+    and not the cost still carries the stored `cost_quantity`, and that is the
+    case this exists for (brief AV). A carried row's cost paid for 3 of its 13
+    units; 2 typed over the 13 would leave a cost that bought more than is
+    held."""
+    covered = row.get("cost_quantity")
+    if covered is None:
+        return
+    if row["cost_basis"] is None:
+        raise HoldingCostRefused(
+            f"A number of units the cost paid for ({covered:g}) needs the cost it goes with."
+        )
+    if row["quantity"] is None:
+        raise HoldingCostRefused(
+            f"This cost paid for {covered:g} units, and a row entered as a total has none. "
+            "Type what the whole position cost, or keep it in units and a price."
+        )
+    if covered > row["quantity"]:
+        raise HoldingCostRefused(
+            f"This cost paid for {covered:g} units, more than the {row['quantity']:g} typed here. "
+            f"Type what the units you hold cost, or keep at least {covered:g}."
+        )
+
+
 def _holding_columns(db: Session, row: dict, sent: Collection[str]) -> dict:
     """Holding columns: a cleaned ISIN, and a `value` worked out from quantity
-    x unit price when it was not given.
+    x unit price when it was not given. A cost that paid for more units than
+    the row holds is refused (`_units_paid_for`).
 
     It takes the session it does not need and the sent keys it does not read,
     because the three builders `_update` calls share one shape — see `Build`.
     """
+    _units_paid_for(row)
     payload = dict(row)
     payload["isin"] = _clean_isin(row["isin"])
     if payload["value"] is None and row["quantity"] is not None and row["unit_price"] is not None:

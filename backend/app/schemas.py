@@ -261,6 +261,16 @@ class SnapshotRead(SnapshotBase):
     created_at: str
 
 
+class PaidNotKept(BaseModel):
+    """A row whose paid part a new situation started from the last could not
+    keep, because nothing priced the row on that day (brief AV)."""
+
+    model_config = API_OUT
+
+    asset_name: str
+    units_paid: float = Field(..., description="The units that paid part had bought")
+
+
 class PrefilledSnapshotRead(SnapshotRead):
     """A snapshot started from the previous one, plus what the app did to it.
 
@@ -277,6 +287,14 @@ class PrefilledSnapshotRead(SnapshotRead):
     needs_attention: list[str] = Field(
         default_factory=list,
         description="Rows carried over unchanged because nothing can price them",
+    )
+    paid_not_kept: list[PaidNotKept] = Field(
+        default_factory=list,
+        description=(
+            "Of those rows, the ones partly bought since the situation it started "
+            "from whose paid part the new one could not keep, with the units it "
+            "had paid for: nothing priced them on that day (brief AV)."
+        ),
     )
 
 
@@ -316,6 +334,17 @@ class HoldingBase(BaseModel):
     cost_estimated: bool | None = Field(
         default=None,
         description="True when the cost was derived (e.g. from a reported % return)",
+    )
+    cost_quantity: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "How many of the row's units `cost_basis` paid for, when not all of "
+            "them: a new situation started from the last writes it for a row "
+            "partly bought since the previous one, the other units being the "
+            "situation's value. Null means the cost covers every unit. Needs a "
+            "cost and a quantity, and no more than the quantity."
+        ),
     )
     currency: str = Field(..., description="Currency, e.g. EUR")
     distribution_policy: str | None = Field(

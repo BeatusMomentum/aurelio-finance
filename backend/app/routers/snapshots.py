@@ -123,12 +123,15 @@ def create_prefilled_snapshot(
     except IntegrityError:
         db.rollback()
         raise _date_taken(name, payload.date)
-    snapshot, opaque = result
+    snapshot, opaque, unkept = result
     return schemas.PrefilledSnapshotRead(
         **snapshot_read(db, snapshot).model_dump(),
         copied_from=source.date,
         repriced=sorted(quotes),
         needs_attention=opaque,
+        paid_not_kept=[
+            schemas.PaidNotKept(asset_name=name, units_paid=units) for name, units in unkept
+        ],
     )
 
 
