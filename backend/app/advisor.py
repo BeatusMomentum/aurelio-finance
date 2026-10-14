@@ -450,7 +450,16 @@ def _render_positions(portfolio: dict, funds: dict) -> list[str]:
                 f"worth {r['observed_value']:.2f} as last observed on "
                 f"{r['observed_on']} (nothing can price it; no P/L is claimed)"
             )
-        if r["realized_pl"]:
+        if r["realized_movement"]:
+            # Brief AV: a sale or a close of a row partly or wholly a
+            # situation's value with no cost realizes a gain only on the units
+            # paid for; the rest is said as what it is.
+            parts.append(
+                f"realized P/L {r['realized_pl']:+.2f} on the units paid for, and "
+                f"movement {r['realized_movement']:+.2f} on a situation's value with no "
+                "purchase price on record (NOT profit)"
+            )
+        elif r["realized_pl"]:
             parts.append(f"realized P/L {r['realized_pl']:+.2f}")
         if r["dividends"]:
             parts.append(f"dividends collected {r['dividends']:.2f}")
@@ -480,7 +489,13 @@ def _render_positions(portfolio: dict, funds: dict) -> list[str]:
         if carried:
             line += f", of which {carried:.2f} is carried from situations, not priced"
         lines.append(line)
-    if portfolio["total_realized"]:
+    if portfolio["total_realized_movement"]:
+        lines.append(
+            f"- TOTAL realized P/L: {portfolio['total_realized']:+.2f} on the units paid for; "
+            f"realized movement {portfolio['total_realized_movement']:+.2f} on situations' "
+            "values with no purchase price on record (NOT profit, and no tax is estimated on it)"
+        )
+    elif portfolio["total_realized"]:
         lines.append(f"- TOTAL realized P/L: {portfolio['total_realized']:+.2f}")
     if portfolio["total_dividends"]:
         line = f"- TOTAL dividends collected: {portfolio['total_dividends']:.2f}"
@@ -512,8 +527,10 @@ def _render_tax(est: dict) -> list[str]:
     reader's net worth has not moved because a tax was estimated."""
     # A realized LOSS is worth saying even though it is no base: silence would
     # leave a reader — or a model — to assume the rate had been applied to it.
+    # So is a realized movement (brief AV), which no rate is applied to.
+    movement = est["realized_movement"]
     has_something = bool(
-        est["realized_gain"] or est["dividends_gross_estimated"]
+        est["realized_gain"] or est["dividends_gross_estimated"] or movement
     )
     if not est["configured"]:
         # Silence would be read as "no tax applies", and a zero would be worse.
@@ -523,10 +540,16 @@ def _render_tax(est: dict) -> list[str]:
         if has_something:
             return [
                 "- TAX: no rate set, so no estimate is made. The realized result "
-                f"is {est['realized_gain']:+.2f} and "
-                f"{est['dividends_gross_estimated']:.2f} of dividends are still "
-                "the market's gross figure. The user sets a rate in Profile; do "
-                "not estimate a tax yourself."
+                f"is {est['realized_gain']:+.2f}"
+                + (" on the units paid for" if movement else "")
+                + f" and {est['dividends_gross_estimated']:.2f} of dividends are still "
+                "the market's gross figure."
+                + (
+                    f" A further {movement:+.2f} realized on situations' values with no "
+                    "purchase price on record is movement, not a gain."
+                    if movement else ""
+                )
+                + " The user sets a rate in Profile; do not estimate a tax yourself."
             ]
         return []
 
@@ -563,6 +586,11 @@ def _render_tax(est: dict) -> list[str]:
             else f"  - realized gain {est['taxable_gain']:.2f} at "
             f"{est['capital_gains_rate']:g}%{where} = {est['capital_gains_tax']:.2f}"
         )
+    if movement:
+        lines.append(
+            f"  - realized movement {movement:+.2f} on situations' values with no purchase "
+            "price on record: NOT a gain, and no rate is applied to it"
+        )
     if est["dividend_withholding_rate"] is not None and est["dividends_gross_estimated"]:
         line = (
             f"  - gross dividends {est['dividends_gross_estimated']:.2f} at "
@@ -576,7 +604,14 @@ def _render_tax(est: dict) -> list[str]:
             )
         lines.append(line)
     if est["total"] is not None:
-        lines.append(f"  - estimated total: {est['total']:.2f}")
+        lines.append(
+            f"  - estimated total: {est['total']:.2f}"
+            + (
+                f" (it leaves out any tax on the movement of {movement:+.2f} above, "
+                "which no rate can be applied to)"
+                if movement else ""
+            )
+        )
     elif est["missing_rates"]:
         lines.append(
             "  - NO total: the user has not set a rate for "

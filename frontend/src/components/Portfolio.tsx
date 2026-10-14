@@ -40,6 +40,7 @@ import { Row, RowsOrEmpty, Section, apiError, btnClass, cardClass, inputClass, l
 import { dividendWord } from "./dividendLine";
 import { ageWords } from "./calendarDays";
 import { COST_WORDS } from "./costWords";
+import { estimatedTotal, movementLine, realizedMovement, taxPanelShown } from "./taxWords";
 import { readReason } from "./lookThroughReason";
 import {
   SHOWN,
@@ -83,9 +84,11 @@ function TaxEstimatePanel({ est, baseCurrency }: { est: TaxEstimate; baseCurrenc
   const inBase = money(baseCurrency);
   /* A realized LOSS counts as something to say, even though it is not a base:
      "you sold at a loss and no tax is estimated on it" is the reader's answer,
-     and going silent would leave them to assume the rate had been applied. */
-  const hasBase =
-    est.realized_gain !== 0 || est.dividends_gross_estimated > 0;
+     and going silent would leave them to assume the rate had been applied.
+     So does a realized movement, which no rate applies to (taxWords.ts). */
+  const hasBase = taxPanelShown(est);
+  const total = estimatedTotal(est, baseCurrency);
+  const movement = movementLine(est, baseCurrency);
   /* No base, no panel — whether or not a rate is set. The rest of this header
      already works this way: the realized-P/L line hides itself when there is
      nothing realized, and a row reading "estimated tax 0.00" is the same noise
@@ -112,6 +115,7 @@ function TaxEstimatePanel({ est, baseCurrency }: { est: TaxEstimate; baseCurrenc
               to anyway.{" "}
             </>
           )}
+          {movement && <>{movement}. </>}
           {est.dividends_gross_estimated > 0 && (
             <>
               {inBase.format(est.dividends_gross_estimated)} of dividends still
@@ -130,10 +134,9 @@ function TaxEstimatePanel({ est, baseCurrency }: { est: TaxEstimate; baseCurrenc
         <span className="text-[0.65rem] uppercase tracking-[0.12em] text-olive">
           Estimated tax{est.country ? ` · ${est.country}` : ""}
         </span>
-        {est.total != null ? (
+        {total != null ? (
           <span className="text-sm text-ink-soft">
-            <span className="font-semibold text-ink">{inBase.format(est.total)}</span>{" "}
-            estimated, and counted in none of the totals above
+            <span className="font-semibold text-ink">{total.amount}</span> {total.words}
           </span>
         ) : (
           <span className="text-sm text-warn">
@@ -168,6 +171,7 @@ function TaxEstimatePanel({ est, baseCurrency }: { est: TaxEstimate; baseCurrenc
             </span>
           </p>
         )}
+        {movement && <p>{movement}</p>}
         {est.dividend_withholding != null && est.dividends_gross_estimated > 0 && (
           <p>
             Gross dividends {inBase.format(est.dividends_gross_estimated)} at{" "}
@@ -423,7 +427,9 @@ export default function Portfolio({
             {data.fx_as_of && <>FX ECB {fmtDate(data.fx_as_of)}</>}
           </span>
         )}
-        {(data.total_realized !== 0 || data.total_dividends !== 0) && (
+        {(data.total_realized !== 0 ||
+          data.total_realized_movement !== 0 ||
+          data.total_dividends !== 0) && (
           <span className="text-sm text-ink-soft">
             {data.total_realized !== 0 && (
               <>
@@ -432,6 +438,14 @@ export default function Portfolio({
                   {data.total_realized >= 0 ? "+" : ""}
                   {money(data.base_currency).format(data.total_realized)}
                 </span>
+              </>
+            )}
+            {/* What sells and closes realized on situations' values with no
+                cost: beside the P/L, never in it (brief AV). */}
+            {data.total_realized_movement !== 0 && (
+              <>
+                {data.total_realized !== 0 ? " · " : "Realized "}
+                {realizedMovement(data.total_realized_movement, data.base_currency)}
               </>
             )}
             {data.total_dividends !== 0 && (

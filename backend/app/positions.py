@@ -193,7 +193,11 @@ class Position:
     # What it is worth NOW, from the price cache — None when nothing can price
     # it (no ticker, no quantity, or no quote).
     market_value: float | None
+    # What the disposals realized on the units paid for: a gain or a loss.
     realized_pl: float
+    # What they realized on a photograph's value with no cost: the movement
+    # since it, not a profit (brief AV; see `replay`).
+    realized_movement: float
     dividends: float
     # The part of `dividends` that is still the market's GROSS figure. An
     # auto-recorded dividend is what the issuer declared per share, which no
@@ -280,6 +284,9 @@ class PositionState:
 
     quantity: float
     book: float
+    # What the disposals realized on the units PAID for: a gain or a loss
+    # against a price paid. Their result on a photograph's value with no cost
+    # is `realized_movement` (brief AV).
     realized_pl: float
     dividends: float
     # Of that dividend cash, how much is still the market's gross figure —
@@ -294,6 +301,10 @@ class PositionState:
     # paid for. See `replay` for how each kind of entry moves it.
     paid: float = 0.0
     paid_units: float = 0.0
+    # What the disposals realized on the rest: the movement since a
+    # photograph whose value no cost was recorded for. Not a profit, and not
+    # what a tax is estimated on; `realized_pl` plus this is the whole result.
+    realized_movement: float = 0.0
 
 
 # --- The projection ---------------------------------------------------------
@@ -307,16 +318,29 @@ def replay(
     start_estimated: bool = False,
     start_paid: float | None = None,
     start_paid_units: float | None = None,
+    start_whole: bool | None = None,
     until: str | None = None,
     amount_of: Callable[[models.Transaction], float] | None = None,
 ) -> PositionState:
     """Average-cost accounting: apply ledger entries in date order to a
     position that starts at (start_qty, start_book). A buy adds units at cost;
     a sell removes units at the RUNNING AVERAGE cost — the gap between that
-    cost and its proceeds is the realized P/L; a dividend only collects cash;
-    a close takes the position in its entirety, so what its proceeds are
+    cost and its proceeds is its result; a dividend only collects cash; a
+    close takes the position in its entirety, so what its proceeds are
     measured against is the WHOLE remaining book. A sell of more units than
     held is clamped (data-entry error, not short selling).
+
+    A sell and a close follow ONE rule for what their result is (brief AV, the
+    reader's choice): the part on the units paid for is a gain or a loss,
+    `realized_pl`; the rest, on a photograph's value with no cost, is
+    `realized_movement`, named and not called a profit. The part paid is the
+    proceeds those units fetched (their share of the units disposed of) less
+    what the pool paid for them. It used to be two rules: a sell counted its
+    whole result as a gain, and a close of a row with no recorded cost counted
+    nothing, so one event had two answers (measured: +130.00 sold, 0.00
+    closed). With no unit held there is no share to take, and `start_whole`
+    decides: all of it a gain where everything was paid, all of it movement
+    where it was not. Left out, it is read off the opening.
 
     There are FOUR kinds and all four are named here. Routing the fourth into
     `else: # buy` is what made a close read as a purchase: its proceeds added
@@ -356,7 +380,12 @@ def replay(
     qty, book = start_qty, start_book
     paid = start_book if start_paid is None else start_paid
     paid_units = start_qty if start_paid_units is None else start_paid_units
-    realized = dividends = dividends_estimated = 0.0
+    # Whether everything is paid, for a disposal when no unit is held: a
+    # value-only row, or a position already emptied. With units, the pool says.
+    whole = start_whole if start_whole is not None else (
+        paid_units >= qty if qty > 0 else paid >= book
+    )
+    realized = movement = dividends = dividends_estimated = 0.0
     estimated = start_estimated
     for t in sorted(entries, key=lambda t: (t.date, t.id)):
         if until is not None and t.date >= until:
@@ -365,20 +394,30 @@ def replay(
         if t.kind == "sell":
             avg = (book / qty) if qty > 0 else 0.0
             sold = min(t.quantity, max(qty, 0.0))
+            result = cash - sold * avg
             if qty > 0:
                 # The same expression as the book's, so a pool that is the
-                # whole book stays exactly the whole book.
-                paid -= sold * (paid / qty)
+                # whole book stays exactly the whole book, and its gain is
+                # exactly the whole result.
+                paid_out = sold * (paid / qty)
+                gain = cash * (paid_units / qty) - paid_out
+                paid -= paid_out
                 paid_units -= sold * (paid_units / qty)
+            else:
+                gain = result if whole else 0.0
             book -= sold * avg
             qty = max(qty - t.quantity, 0.0)
-            realized += cash - sold * avg
+            realized += gain
+            movement += result - gain
             if qty <= 0:
                 estimated = False
         elif t.kind == "close":
             # Everything goes at once. There are no units to price against an
             # average, so the basis is the entire book the entries built.
-            realized += cash - book
+            result = cash - book
+            gain = (cash * (paid_units / qty) - paid) if qty > 0 else (result if whole else 0.0)
+            realized += gain
+            movement += result - gain
             qty = book = paid = paid_units = 0.0
             estimated = False
         elif t.kind == "dividend":
@@ -391,15 +430,34 @@ def replay(
             if t.estimated:
                 dividends_estimated += cash
         else:  # buy
+            if qty <= 0:
+                whole = True  # a position bought from nothing is all paid
             qty += t.quantity
             book += cash
             paid += cash
             paid_units += t.quantity
             if t.estimated:
                 estimated = True
+        if qty > 0:
+            whole = paid_units >= qty
     return PositionState(
-        qty, book, realized, dividends, dividends_estimated, estimated, paid, paid_units
+        qty, book, realized, dividends, dividends_estimated, estimated, paid, paid_units,
+        movement,
     )
+
+
+def _closed_on(entries: list[models.Transaction], quantity: float | None) -> str | None:
+    """The day the last close among `entries` disposed of the position, while
+    it holds no units.
+
+    A position bought again after its close is open again, and "disposed of"
+    beside the units it holds would be false. Measured on the ledger-born path
+    (brief AV): closed, then 2 units bought, it read closed_on with the 2 held.
+    One rule on both paths."""
+    if quantity is not None and quantity > 0:
+        return None
+    last = max((t for t in entries if t.kind == "close"), key=lambda t: (t.date, t.id), default=None)
+    return last.date if last is not None else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -515,19 +573,22 @@ def project(
             until=day,
         )
 
-    def _closure(inst_id: int | None, h: models.Holding, anchor: str):
-        """The `close` entry that disposed of this row after the photo, if any.
+    def _closes(inst_id: int | None, h: models.Holding, anchor: str) -> list[models.Transaction]:
+        """The `close` entries that disposed of this row after the photo, in
+        date order.
 
         Matched on the ticker when there is one and on the name when there is
         not — because the rows that most need an exit are exactly the ones no
         ticker describes, and until now their only way out was to vanish from a
         photograph, which is the silent deletion this is meant to replace."""
-        for t in dated.events_after(anchor, txs, until=day):
-            if t.kind != "close" or t.institution_id != inst_id:
-                continue
-            if (h.symbol and t.symbol == h.symbol) or t.asset_name == h.asset_name:
-                return t
-        return None
+        return sorted(
+            (
+                t for t in dated.events_after(anchor, txs, until=day)
+                if t.kind == "close" and t.institution_id == inst_id
+                and ((h.symbol and t.symbol == h.symbol) or t.asset_name == h.asset_name)
+            ),
+            key=lambda t: (t.date, t.id),
+        )
 
     out: list[Position] = []  # merged view: snapshot holdings + ledger
     seen: set[tuple[int | None, str]] = set()
@@ -557,7 +618,7 @@ def project(
             )
             book = recorded_cost if recorded_cost is not None else from_photo
             cost_known_from_photo = recorded_cost is not None
-            realized = dividends = dividends_estimated = 0.0
+            realized = movement = dividends = dividends_estimated = 0.0
             # True once a recorded purchase contributes to the book: only then
             # is "average cost" a price actually paid rather than the price at
             # which a snapshot happened to be taken.
@@ -575,26 +636,18 @@ def project(
             else:
                 paid, units_paid = 0.0, (None if h.quantity is None else 0.0)
 
-            closed = _closure(inst_id, h, snap.date)
-            if closed is not None:
-                # Gone, and where it went is on record. The position keeps the
-                # gain it locked in but stops counting toward what you hold.
-                opening = (
-                    amount_in_base(h.cost_basis, h, conv, quote_ccy)
-                    if h.cost_basis is not None
-                    else from_photo
-                )
-                quantity, book, observed = 0.0, 0.0, 0.0
-                paid, units_paid = 0.0, 0.0
-                realized = (cash(closed) - opening) if h.cost_basis is not None else 0.0
-                cost_known = h.cost_basis is not None
-                closed_on = closed.date
-                if h.symbol:
-                    seen.add((inst_id, h.symbol))
-            elif h.symbol and h.quantity is not None:
-                # Merge the ledger only into quantity-based holdings.
+            closes = _closes(inst_id, h, snap.date)
+            if h.symbol and h.quantity is not None:
+                # Merge the ledger only into quantity-based holdings: every
+                # entry of its ticker after the photo, and a close that names
+                # the row without its ticker. The close is walked like any
+                # other entry (brief AV). Settled against the photograph alone,
+                # it counted what was bought since as gain (+530.00 where
+                # selling the same units realized +230.00), dropped the
+                # dividends before it from the totals, and lost a buy after it.
                 seen.add((inst_id, h.symbol))
                 later = _later_txs(inst_id, h.symbol)
+                later += [t for t in closes if t.symbol != h.symbol]
                 # A recorded cost is the basis when there is one (the same
                 # figure read above, for every photographed row). Otherwise the
                 # photograph's value stands in — and then it is NOT a cost, and
@@ -613,7 +666,9 @@ def project(
                 quantity, book = walked.quantity, walked.book
                 paid, units_paid = walked.paid, walked.paid_units
                 realized, dividends = walked.realized_pl, walked.dividends
+                movement = walked.realized_movement
                 dividends_estimated = walked.dividends_estimated
+                closed_on = _closed_on(later, quantity)
                 # The same walk, opened at what the photograph SAID instead of
                 # at what was paid. Two openings, one set of entries: a buy adds
                 # its cost to both, a sell removes units at each walk's own
@@ -653,6 +708,29 @@ def project(
                 # and it asked `cost_known` first, so a photograph with plan
                 # buys on top said nothing of theirs (brief AV).
                 cost_estimated = walked.cost_estimated
+            elif closes:
+                # A row with no units, or no ticker: the ledger merges nothing
+                # into it but its first close, which settles it whole. The same
+                # walk counts it, so a row with no units is paid all or nothing,
+                # by whether a cost is recorded: with none, its result is the
+                # movement since the photograph, said as such, where it used
+                # to be 0.00.
+                closed = closes[0]
+                walked = replay(
+                    [closed],
+                    start_qty=h.quantity or 0.0,
+                    start_book=book,
+                    start_paid=paid,
+                    start_paid_units=units_paid or 0.0,
+                    start_whole=recorded_cost is not None,
+                    amount_of=cash,
+                )
+                quantity, book, observed = 0.0, 0.0, 0.0
+                paid, units_paid = 0.0, 0.0
+                realized, movement = walked.realized_pl, walked.realized_movement
+                closed_on = closed.date
+                if h.symbol:
+                    seen.add((inst_id, h.symbol))
 
             out.append(
                 Position(
@@ -667,6 +745,7 @@ def project(
                     observed_value=observed,
                     market_value=None,  # priced in one batch below
                     realized_pl=realized,
+                    realized_movement=movement,
                     dividends=dividends,
                     dividends_estimated=dividends_estimated,
                     cost_known=cost_known,
@@ -688,7 +767,7 @@ def project(
     # snapshot). Only a SYMBOLED entry can start one: the schema refuses a buy
     # or a sell with no ticker, so the only entry that can carry a null symbol
     # is a close — and a close settles a row some photograph took, which
-    # `_closure` binds by NAME above. Reaching one again here gave it a second
+    # `_closes` binds by NAME above. Reaching one again here gave it a second
     # position of its own: the Gold bar closed for 430 was reported as +80 on
     # the row that actually held it and +430 again on a row that never
     # existed. It also put a null symbol into a sort against a real one, which
@@ -705,19 +784,18 @@ def project(
         walked = replay(later, amount_of=cash)
         # The entry that disposed of this row, for its DATE alone — replay has
         # already taken the position out of the numbers. The snapshot path asks
-        # the same question through `_closure`, which also has to match on the
-        # asset NAME; here the entries were selected by symbol already, so the
-        # last close among them is the answer. Without this a position that
-        # only ever existed in the ledger had no way to be shown as closed:
-        # `_closure` iterates snapshot holdings, and this one is in none.
-        closed = max(
-            (t for t in later if t.kind == "close"),
-            key=lambda t: (t.date, t.id),
-            default=None,
-        )
+        # the same question of `_closes`, which also has to match on the asset
+        # NAME; here the entries were selected by symbol already, so the last
+        # close among them is the answer. Without this a position that only
+        # ever existed in the ledger had no way to be shown as closed:
+        # `_closes` reads snapshot holdings, and this one is in none.
         qty, book = walked.quantity, walked.book
         realized, divs = walked.realized_pl, walked.dividends
-        if closed is None and qty <= 0 and not realized and not divs:
+        closed_on = _closed_on(later, qty)
+        if (
+            not any(t.kind == "close" for t in later)
+            and qty <= 0 and not realized and not walked.realized_movement and not divs
+        ):
             continue
         latest = max(later, key=lambda t: (t.date, t.id))
         out.append(
@@ -735,6 +813,7 @@ def project(
                 observed_value=book,
                 market_value=None,
                 realized_pl=realized,
+                realized_movement=walked.realized_movement,
                 dividends=divs,
                 dividends_estimated=walked.dividends_estimated,
                 cost_known=any(t.kind == "buy" for t in later),
@@ -748,7 +827,7 @@ def project(
                 # Born from the ledger: its quantity was last confirmed by its
                 # most recent entry, not by any photograph.
                 observed_on=latest.date,
-                closed_on=closed.date if closed is not None else None,
+                closed_on=closed_on,
                 currency_note=None,
             )
         )

@@ -221,11 +221,20 @@ def estimate(
     realized: float,
     dividends_estimated: float,
     dividends_recorded: float,
+    realized_movement: float = 0.0,
 ) -> dict:
     """The estimate, from the two bases the portfolio already computed.
 
     Pure: it takes numbers, not a session, so what it claims can be checked
     without a database.
+
+    `realized` is what sells and closes realized on the units PAID for, the
+    gain the rate applies to. `realized_movement` is what they realized on a
+    situation's value that no purchase price was recorded for (brief AV): its
+    true gain depends on a cost nobody wrote down, so no rate is applied to it
+    and the total leaves its tax out. It is carried here so every reader of
+    the total reads that beside it; a total that silently left it out would
+    be the claim-shaped absence refused below.
 
     `dividends_estimated` is the gross subset — the rows still carrying the
     market's figure. `dividends_recorded` is the rest, which the reader
@@ -284,6 +293,14 @@ def estimate(
             "so they are already net of whatever your broker withheld. No rate is "
             "applied to them."
         )
+    if realized_movement:
+        caveats.append(
+            "Part of what was sold or closed was a situation's value that no "
+            "purchase price was recorded for. Its result is a movement since "
+            "that situation, shown apart: no rate is applied to it, so the "
+            "estimated total leaves its tax out. Type the purchase price on that "
+            "situation's row to make it a gain or a loss."
+        )
     known = default_for(rates.country)
     if known is not None:
         caveats.append(f"{rates.country}: {known.omits}")
@@ -296,6 +313,7 @@ def estimate(
         "realized_gain": realized,
         "taxable_gain": taxable_gain,
         "capital_gains_tax": cg_tax,
+        "realized_movement": realized_movement,
         "dividends_gross_estimated": dividends_estimated,
         "dividends_recorded_net": dividends_recorded,
         "dividend_withholding": div_tax,

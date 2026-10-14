@@ -1111,6 +1111,7 @@ def compute_portfolio(db: Session, live: bool = False) -> dict:
     total_book_paid = 0.0
     total_market = 0.0
     total_realized = 0.0
+    total_realized_movement = 0.0
     total_dividends = 0.0
     total_dividends_estimated = 0.0
     as_of_dates: list[str] = []
@@ -1125,6 +1126,7 @@ def compute_portfolio(db: Session, live: bool = False) -> dict:
         total_book += book
         total_book_paid += p.book_paid
         total_realized += p.realized_pl
+        total_realized_movement += p.realized_movement
         total_dividends += p.dividends
         total_dividends_estimated += p.dividends_estimated
         live_price = as_of = market = delta = delta_pct = currency = None
@@ -1201,6 +1203,7 @@ def compute_portfolio(db: Session, live: bool = False) -> dict:
                 "quantity_age_days": _days_since(p.observed_on),
                 "currency_note": p.currency_note,
                 "realized_pl": p.realized_pl,
+                "realized_movement": p.realized_movement,
                 "dividends": p.dividends,
                 "dividends_estimated": p.dividends_estimated,
                 "live_price": live_price,
@@ -1226,6 +1229,10 @@ def compute_portfolio(db: Session, live: bool = False) -> dict:
         "prices_as_of": min(as_of_dates) if any_priced else None,
         "base_currency": conv.base,
         "total_realized": total_realized,
+        # What sells and closes realized on situations' values that no cost
+        # was recorded for: movement, said beside the gains and never in them
+        # (brief AV, the reader's rule for a disposal).
+        "total_realized_movement": total_realized_movement,
         "total_dividends": total_dividends,
         # The gross subset, named beside the sum it is part of rather than
         # left to be recovered downstream: the split exists because only the
@@ -1239,6 +1246,7 @@ def compute_portfolio(db: Session, live: bool = False) -> dict:
         "tax_estimate": tax.estimate(
             tax.read_rates(db),
             realized=total_realized,
+            realized_movement=total_realized_movement,
             dividends_estimated=total_dividends_estimated,
             dividends_recorded=total_dividends - total_dividends_estimated,
         ),

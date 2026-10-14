@@ -3975,6 +3975,11 @@ export interface components {
             /** Total Realized */
             total_realized: number;
             /**
+             * Total Realized Movement
+             * @description What sells and closes realized on situations' values that no purchase price was recorded for (see PortfolioRow.realized_movement), beside total_realized and never inside it
+             */
+            total_realized_movement: number;
+            /**
              * Unconverted
              * @description Amounts that entered these totals without being converted, because no rate is known for the currency they are written in. The pair to `fx_as_of`: that says which rate was applied, this says what no rate could be applied to.
              */
@@ -4173,8 +4178,13 @@ export interface components {
             /** Quantity Age Days */
             quantity_age_days: number | null;
             /**
+             * Realized Movement
+             * @description What they realized on a situation's value that no purchase price was recorded for: the movement since that situation, not a profit. realized_pl plus this is the whole result at average cost.
+             */
+            realized_movement: number;
+            /**
              * Realized Pl
-             * @description Gains locked in by sells since the snapshot anchor
+             * @description What sells and closes since the snapshot anchor realized on the units PAID for: a gain or a loss against a price paid
              */
             realized_pl: number;
             /** Symbol */
@@ -4705,9 +4715,14 @@ export interface components {
             missing_rates: string[];
             /**
              * Realized Gain
-             * @description The ledger's realized result as-is, which may be NEGATIVE. Kept signed and separate from `taxable_gain` so a loss is visible as a loss instead of disappearing into a zero tax.
+             * @description The ledger's realized result on the units PAID for, as-is, which may be NEGATIVE. Kept signed and separate from `taxable_gain` so a loss is visible as a loss instead of disappearing into a zero tax.
              */
             realized_gain: number;
+            /**
+             * Realized Movement
+             * @description What sells and closes realized on situations' values that no purchase price was recorded for: a movement, not a gain. No rate is applied to it and `total` leaves its tax out, so every reader of the total says this beside it.
+             */
+            realized_movement: number;
             /**
              * Regime
              * @description The named regime behind a shipped default (e.g. 'Abgeltungsteuer 25% + 5.5% Solidaritätszuschlag'), so the reader can check the number against something. Null for a country this app ships no default for, including when the rates are set by hand.

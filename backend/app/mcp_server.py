@@ -287,6 +287,7 @@ def build_server(db_path: str | os.PathLike[str] | None = None) -> MCPServer:
                         "market_value": p.market_value,
                         "current_value": p.current_value,
                         "realized_pl": p.realized_pl,
+                        "realized_movement": p.realized_movement,
                         "dividends": p.dividends,
                         "observed_on": p.observed_on,
                         "closed_on": p.closed_on,
@@ -304,7 +305,10 @@ def build_server(db_path: str | os.PathLike[str] | None = None) -> MCPServer:
                     "is a price paid, for `units_paid` units; the rest is what "
                     "a photograph said the row was worth. A gain is the value "
                     "of the units paid for less `book_paid`: do not subtract "
-                    "the whole book from a value and call the difference a gain."
+                    "the whole book from a value and call the difference a gain. "
+                    "The same for what sells and closes realized: `realized_pl` "
+                    "on the units paid for, `realized_movement` on a "
+                    "photograph's value, which is movement and not a profit."
                 ),
             }
 

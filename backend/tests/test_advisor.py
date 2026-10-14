@@ -64,7 +64,10 @@ def test_build_context_includes_ledger_and_position_economics(client):
         ctx = advisor.build_context(db)
 
     assert "avg cost 110.00" in ctx          # (1000 + 1200) / 20
-    assert "realized P/L +100.00" in ctx     # 650 - 5*110
+    # Brief AV: 10 photographed with no cost and 10 bought at 120, 5 sold at
+    # 130. The 650 against an average of 110 is +100.00, and half the units
+    # sold are the ones paid for: 325 - 300 = +25.00 a gain, +75.00 movement.
+    assert "realized P/L +25.00 on the units paid for, and movement +75.00" in ctx
     assert "## Transaction ledger" in ctx
     assert f"{today} sell 5 x VWCE.MI @ 130.00" in ctx
     assert "No occurrence has bought anything yet." in ctx

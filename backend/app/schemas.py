@@ -727,9 +727,18 @@ class TaxEstimate(BaseModel):
     realized_gain: float = Field(
         ...,
         description=(
-            "The ledger's realized result as-is, which may be NEGATIVE. Kept "
-            "signed and separate from `taxable_gain` so a loss is visible as a "
-            "loss instead of disappearing into a zero tax."
+            "The ledger's realized result on the units PAID for, as-is, which "
+            "may be NEGATIVE. Kept signed and separate from `taxable_gain` so a "
+            "loss is visible as a loss instead of disappearing into a zero tax."
+        ),
+    )
+    realized_movement: float = Field(
+        ...,
+        description=(
+            "What sells and closes realized on situations' values that no "
+            "purchase price was recorded for: a movement, not a gain. No rate "
+            "is applied to it and `total` leaves its tax out, so every reader "
+            "of the total says this beside it."
         ),
     )
     taxable_gain: float = Field(
@@ -988,7 +997,19 @@ class PortfolioRow(BaseModel):
         description="Set when the hand-typed currency disagrees with the listing's own",
     )
     realized_pl: float = Field(
-        ..., description="Gains locked in by sells since the snapshot anchor"
+        ...,
+        description=(
+            "What sells and closes since the snapshot anchor realized on the "
+            "units PAID for: a gain or a loss against a price paid"
+        ),
+    )
+    realized_movement: float = Field(
+        ...,
+        description=(
+            "What they realized on a situation's value that no purchase price "
+            "was recorded for: the movement since that situation, not a profit. "
+            "realized_pl plus this is the whole result at average cost."
+        ),
     )
     dividends: float = Field(
         ..., description="Dividends collected since the snapshot anchor"
@@ -1079,6 +1100,14 @@ class Portfolio(BaseModel):
     prices_as_of: str | None
     base_currency: BaseCurrency
     total_realized: float
+    total_realized_movement: float = Field(
+        ...,
+        description=(
+            "What sells and closes realized on situations' values that no "
+            "purchase price was recorded for (see PortfolioRow.realized_movement), "
+            "beside total_realized and never inside it"
+        ),
+    )
     total_dividends: float
     total_dividends_estimated: float = Field(
         ...,

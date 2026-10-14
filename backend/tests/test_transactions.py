@@ -400,8 +400,13 @@ def test_sell_removes_units_at_avg_cost_and_realizes_pl(client):
     assert row["quantity"] == 15
     assert abs(row["book_value"] - 1650) < 1e-9  # 2200 - 5*110
     assert abs(row["avg_cost"] - 110) < 1e-9  # average survives the sale
-    assert abs(row["realized_pl"] - 100) < 1e-9  # 650 - 550
-    assert abs(p["total_realized"] - 100) < 1e-9
+    # 650 - 550 = +100.00 at average cost. The photograph recorded no cost, so
+    # (brief AV) only the units paid for realize a gain: half of the 5 sold,
+    # 325 against the 300 they cost; the other +75.00 is movement.
+    assert abs(row["realized_pl"] - 25) < 1e-9
+    assert abs(row["realized_movement"] - 75) < 1e-9
+    assert abs(p["total_realized"] - 25) < 1e-9
+    assert abs(p["total_realized_movement"] - 75) < 1e-9
 
 
 def test_sell_credits_cash_and_net_worth_gains_realized(client):

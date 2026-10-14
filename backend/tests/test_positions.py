@@ -34,6 +34,7 @@ def _position(**over) -> positions.Position:
         observed_value=0.0,
         market_value=None,
         realized_pl=0.0,
+        realized_movement=0.0,
         dividends=0.0,
         dividends_estimated=0.0,
         cost_known=False,
