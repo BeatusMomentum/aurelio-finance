@@ -682,7 +682,7 @@ function AllocationList({
       <div className="space-y-2">
         {items.slice(0, 10).map((it) => (
           <div key={it.name} className="grid grid-cols-[8rem_1fr_3.5rem] items-center gap-2 text-sm">
-            <span className="truncate text-ink" title={it.name}>{it.name}</span>
+            <span className="min-w-0 break-words text-ink" title={it.name}>{it.name}</span>
             <WeightBar pct={it.pct} />
             <span className="text-right tabular-nums text-ink-soft">{it.pct.toFixed(1)}%</span>
           </div>
@@ -852,8 +852,11 @@ function LookThroughSection() {
             ))}
 
             {/* Naming names: a coverage number alone does not tell you which
-                position is missing, and that is the one thing you can act on. */}
-            <div className="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2">
+                position is missing, and that is the one thing you can act on.
+                One column of minmax(0, 1fr) on a phone, and names that wrap:
+                a column of `auto` width kept each uncut name's full width and
+                widened Portfolio to 518 at 390 (brief AU). */}
+            <div className="mt-4 grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-2">
               <div>
                 <h5 className="mb-1.5 text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-olive">
                   Looked inside
@@ -863,7 +866,7 @@ function LookThroughSection() {
                     .filter((r) => r.decomposed)
                     .map((r) => (
                       <li key={r.symbol ?? r.asset_name} className="flex justify-between gap-3">
-                        <span className="truncate text-ink" title={r.resolved_name ?? undefined}>
+                        <span className="min-w-0 break-words text-ink" title={r.resolved_name ?? undefined}>
                           {r.asset_name}
                         </span>
                         <span className="shrink-0 tabular-nums text-ink-soft">
@@ -886,7 +889,7 @@ function LookThroughSection() {
                     .filter((r) => !r.decomposed)
                     .map((r) => (
                       <li key={r.symbol ?? r.asset_name} className="flex justify-between gap-3">
-                        <span className="truncate text-ink-soft" title={r.error ?? undefined}>
+                        <span className="min-w-0 break-words text-ink-soft" title={r.error ?? undefined}>
                           {r.asset_name}
                         </span>
                         <span className="shrink-0 tabular-nums text-ink-faint">

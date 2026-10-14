@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   getCatalogueStatus,
   lookupSymbols,
@@ -8,6 +8,7 @@ import {
   type SymbolLookup,
 } from "../api/instruments";
 import { catalogueNotice, type CatalogueState } from "./catalogueNotice";
+import { pickerListWidth } from "./pickerWidth";
 import { inputClass, locale, policyWord } from "./ui";
 
 /* The instrument name field, with the catalogue behind it.
@@ -132,6 +133,7 @@ export function InstrumentPicker({
   const [arrived, setArrived] = useState(0);
   const rows = catalogue?.rows ?? null;
   const box = useRef<HTMLDivElement>(null);
+  const list = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     void getCatalogueStatus()
@@ -198,6 +200,23 @@ export function InstrumentPicker({
     return () => clearInterval(t);
   }, [waiting]);
 
+  // The list's width: the room from its box to the window's edge, at most
+  // 34rem (pickerWidth.ts). Set on the element before the browser paints, and
+  // again when the window is resized while it is open; the box's left edge
+  // does not move when the page scrolls.
+  useLayoutEffect(() => {
+    const anchor = box.current;
+    const drop = list.current;
+    if (!showList || !anchor || !drop) return;
+    const place = () => {
+      const r = anchor.getBoundingClientRect();
+      drop.style.width = `${pickerListWidth(r.left, r.width, document.documentElement.clientWidth)}px`;
+    };
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [showList]);
+
   // Matched here rather than on the server: they are already in memory, and a
   // list of your own holdings should not wait on anything.
   const needle = value.trim().toLowerCase();
@@ -208,7 +227,7 @@ export function InstrumentPicker({
   );
 
   return (
-    <div ref={box} className="relative">
+    <div ref={box} className="relative max-w-full">
       <input
         className={inputClass + " w-72"}
         placeholder={placeholder}
@@ -222,7 +241,10 @@ export function InstrumentPicker({
         onFocus={() => setOpen(true)}
       />
       {showList && (
-        <div className="absolute left-0 top-full z-20 mt-1 max-h-96 w-[34rem] overflow-y-auto border border-rule bg-surface shadow-lg">
+        <div
+          ref={list}
+          className="absolute left-0 top-full z-20 mt-1 max-h-96 overflow-y-auto border border-rule bg-surface shadow-lg"
+        >
           {notice && (
             // Nothing to search yet: say where the download stands rather than
             // show an empty list that looks broken. No button: the app
@@ -256,7 +278,7 @@ export function InstrumentPicker({
             >
               <span className="w-24 shrink-0 truncate font-mono text-xs text-ink">{o.symbol}</span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm text-ink">{o.name}</span>
+                <span className="block break-words text-sm text-ink">{o.name}</span>
                 {o.institution && (
                   <span className="block truncate text-[0.65rem] text-ink-soft">
                     held at {o.institution}
@@ -308,7 +330,7 @@ export function InstrumentPicker({
                   {r.symbol}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm text-ink">{r.name ?? r.symbol}</span>
+                  <span className="block break-words text-sm text-ink">{r.name ?? r.symbol}</span>
                   <span className="block truncate text-[0.65rem] text-ink-soft">
                     {r.quote_type}
                     {r.exchange && ` · ${exchangeName(r.exchange)}`}
@@ -374,9 +396,11 @@ export function InstrumentPicker({
                   {/* The policy leads the grey line rather than holding a column
                       of its own: the whole word needs 83px, and a column that
                       wide cut 1,034 of the catalogue's 4,544 names where this
-                      layout cuts 231 (a 40px column of "Acc" cut 510). */}
+                      layout cut 231 (a 40px column of "Acc" cut 510). The names
+                      wrap now and none is cut (brief AU); the column would
+                      still take its 83px from every one of them. */}
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm text-ink">{m.name}</span>
+                    <span className="block break-words text-sm text-ink">{m.name}</span>
                     <span className="block truncate text-[0.65rem] text-ink-soft">
                       <span className={m.distribution_policy === "dist" ? "text-up" : undefined}>
                         {policyWord(m.distribution_policy) ?? "unknown"}

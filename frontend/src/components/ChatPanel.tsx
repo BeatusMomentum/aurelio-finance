@@ -953,7 +953,13 @@ export default function ChatPanel({
   // rather than reflowed. The page beside it does reflow, deliberately
   // animated over 300ms so the eye can follow the tables moving; the tables
   // themselves scroll horizontally inside their cards rather than squeezing.
-  const width = "w-[32vw] min-w-[280px] max-w-[35vw]";
+  //
+  // Below 640px there is no room beside it: at 390 the 280px minimum left the
+  // page 54px and every page scrolled sideways to 653 (brief AU). There the
+  // panel lies over the page, from the rail to the window's edge, and the page
+  // keeps its width under it.
+  const width =
+    "w-[32vw] min-w-[280px] max-w-[35vw] max-sm:w-[calc(100vw-3.5rem)] max-sm:min-w-0 max-sm:max-w-none";
 
   return (
     // The aside ITSELF is the sticky element, one viewport tall, so it follows
@@ -965,7 +971,7 @@ export default function ChatPanel({
       aria-label="Chat with Aurelio"
       aria-hidden={!open}
       className={
-        "sticky top-0 h-screen shrink-0 self-start overflow-hidden border-r border-rule bg-surface transition-[width] duration-300 ease-in-out motion-reduce:transition-none " +
+        "sticky top-0 h-screen shrink-0 self-start overflow-hidden border-r border-rule bg-surface transition-[width] duration-300 ease-in-out motion-reduce:transition-none max-sm:fixed max-sm:left-14 max-sm:z-30 " +
         (open ? width : "w-0 border-r-0")
       }
     >
@@ -1041,7 +1047,7 @@ export default function ChatPanel({
                       <span className="min-w-0 flex-1">
                         <span
                           className={
-                            "block truncate text-sm " +
+                            "block break-words text-sm " +
                             (c.id === conversationId ? "font-medium text-ink" : "text-ink")
                           }
                         >

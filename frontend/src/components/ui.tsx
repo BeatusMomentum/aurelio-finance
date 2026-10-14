@@ -10,8 +10,13 @@ import { localDay } from "./calendarDays";
 // No soft shadows: depth comes from hairlines, as in the design specimen.
 // The exception is what floats above the page (the instrument picker's list,
 // a "?"'s panel), where a hairline alone cannot say which surface is on top.
+//
+// `max-w-full`: a box is never wider than what holds it. A width class sets
+// what it wants; on a phone the container wins. At 390 Profile's select kept
+// the width of its longest option and widened the page to 418, and the
+// situation form's name box crossed its card by 35px (brief AU).
 export const inputClass =
-  "rounded-sm border border-rule bg-surface px-3 py-2 text-sm outline-none transition focus:border-olive focus:ring-1 focus:ring-olive";
+  "max-w-full rounded-sm border border-rule bg-surface px-3 py-2 text-sm outline-none transition focus:border-olive focus:ring-1 focus:ring-olive";
 export const btnClass =
   "rounded-sm bg-olive px-4 py-2 text-sm font-medium tracking-wide text-white transition hover:bg-olive-deep disabled:opacity-50";
 export const cardClass = "rounded-sm border border-rule bg-surface";
@@ -466,22 +471,27 @@ export function Row({
       kept, and a long word wraps rather than widening the row.
 
       It sits under the whole row, not in the text column. On a phone the
-      figure and the badge can squeeze that column to a few pixels (at 390px
-      a debt's own name already has 2), and a note drawn inside it stood one
+      figure and the badge used to squeeze that column to a few pixels (at
+      390px a debt's own name had 2), and a note drawn inside it stood one
       letter per line. Outside the button, it is also not read out as part of
       the row's name. */
   note?: string | null;
   badge?: string | null;
   value?: string;
 }) {
+  /* The name says what the row is, so it is never cut: it wraps. And it keeps
+     at least 10rem: a row too narrow for that beside its figure and badge puts
+     those on a line of their own under the name. At 390 they and the buttons
+     left a debt's name 2px of its 69, and an expense's 16 of 155 (brief AU).
+     Wide, nothing moves: the figure stays at the row's end. */
   const content = (
     <>
-      <div className="min-w-0">
-        <div className="truncate font-medium text-ink">{title}</div>
+      <div className="min-w-0 grow basis-40">
+        <div className="break-words font-medium text-ink">{title}</div>
         {subtitle && <div className="truncate text-xs text-ink-soft">{subtitle}</div>}
         {detail && <div className="text-xs text-ink-faint">{detail}</div>}
       </div>
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="ml-auto flex shrink-0 items-center gap-2">
         {value && <span className="tnum text-sm font-medium text-ink">{value}</span>}
         {badge && (
           <span className="rounded-full border border-olive px-2.5 py-0.5 text-[0.65rem] uppercase tracking-wider text-olive">
@@ -493,7 +503,7 @@ export function Row({
     </>
   );
   const innerCls =
-    "flex min-w-0 flex-1 items-center justify-between gap-3 px-4 py-3 text-left";
+    "flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-3 text-left";
   return (
     <li>
       <div className="flex items-center">

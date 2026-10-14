@@ -230,8 +230,12 @@ export default function Goals() {
             key={g.id}
             onEdit={() => startEdit(g)}
             onDelete={() => remove(g)}
-            title={typeLabel(g.type) ?? g.name}
-            subtitle={[g.name !== typeLabel(g.type) ? g.name : null, goalSubtitle(g)]
+            // The goal's own name says what the row is, so it is the title,
+            // which wraps and is never cut; the kind of goal goes under it. At
+            // 390 a name kept in the attributes line was cut ("A sabbatical
+            // year walking the Camino", 171 of 197px; brief AU).
+            title={g.name}
+            subtitle={[g.name !== typeLabel(g.type) ? typeLabel(g.type) : null, goalSubtitle(g)]
               .filter(Boolean)
               .join(" · ") || undefined}
             note={g.notes}

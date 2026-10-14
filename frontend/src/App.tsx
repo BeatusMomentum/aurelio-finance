@@ -272,6 +272,14 @@ export default function App() {
   // — and a filter left switched on would quietly hide the eleventh expense
   // from someone entering ten in a row, which is the workflow the account page
   // exists alongside rather than replaces.
+  // What the chat opens in the main column: an analysis, or the list of them.
+  // Below 640px the open panel lies over the page (ChatPanel), so it steps
+  // aside, or what it opened would open under it, out of reach.
+  function fromChat(open: () => void) {
+    open();
+    if (window.matchMedia("(width < 40rem)").matches) setChatOpen(false);
+  }
+
   function go(f: Focus) {
     setReading(null);
     if (f === "ledger") {
@@ -354,8 +362,8 @@ export default function App() {
       <ChatPanel
         open={chatOpen}
         page={page}
-        onOpenRun={setReading}
-        onOpenAnalyses={() => setReading("list")}
+        onOpenRun={(id) => fromChat(() => setReading(id))}
+        onOpenAnalyses={() => fromChat(() => setReading("list"))}
       />
       <div className="min-w-0 flex-1">
         {pacResult && (
