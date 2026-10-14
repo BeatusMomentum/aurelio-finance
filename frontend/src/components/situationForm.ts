@@ -126,8 +126,11 @@ export interface Draft {
     a new row takes its group's class, an edited one keeps its own (an ETF
     stays `fund_etf`). Entered as a total, no units and no price; as units
     and a price, no value, which the backend works out. A cost the reader
-    changed covers every unit (`cost_quantity` null); one left as loaded
-    keeps the units it paid for, by not being sent (brief AV). */
+    changed covers every unit (`cost_quantity` null) and is their own figure,
+    no longer an estimate (`cost_estimated` false, or null with no cost);
+    one left as loaded keeps both, by not sending them (brief AV). The form
+    has no box for either, so an edit kept a plan-built cost "estimated"
+    after the reader typed the contract note's figure over it. */
 export function holdingPayload(d: Draft, group: Bucket, editing: Editing | null): HoldingCreate {
   const shared = {
     asset_name: d.name.trim(),
@@ -137,7 +140,9 @@ export function holdingPayload(d: Draft, group: Bucket, editing: Editing | null)
   };
   const rest = {
     cost_basis: d.cost ? Number(d.cost) : null,
-    ...(costChanged(d.cost, editing) ? { cost_quantity: null } : {}),
+    ...(costChanged(d.cost, editing)
+      ? { cost_estimated: d.cost ? false : null, cost_quantity: null }
+      : {}),
     currency: d.currency,
     distribution_policy: d.policy || null,
   };

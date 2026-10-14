@@ -76,6 +76,7 @@ import { dividendWord } from "./dividendLine";
 import { priceDay } from "./priceDay";
 import { costCovers, holdingPayload, offers, shows, unitsBelowCost } from "./situationForm";
 import { prefillWords } from "./prefillNote";
+import { heldFigures } from "./heldTotal";
 
 // The occasional, destructive twin of a primary action: same size, same
 // shape, warning colour. `btnClass` is for the action you take every time;
@@ -534,12 +535,8 @@ function SnapshotsLevel({
   // and `heldCarried` is the same admission it makes: the share of a total
   // that is a figure carried forward rather than one anybody quoted today.
   // Stating it is not caution, it is the difference between a number and a
-  // number you can act on.
-  const heldCarried = held
-    .filter((r) => r.market_value === null)
-    .reduce((s, r) => s + r.book_value, 0);
-  const heldTotal =
-    held.reduce((s, r) => s + (r.market_value ?? 0), 0) + heldCarried;
+  // number you can act on (heldTotal.ts).
+  const { total: heldTotal, carried: heldCarried } = heldFigures(held);
 
   // The situation already sitting on the chosen date, if there is one. One
   // photograph per institution per date is the model, so this is not an error

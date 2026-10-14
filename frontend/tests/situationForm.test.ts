@@ -262,3 +262,15 @@ test("units typed below what the cost paid for are refused under the field, in t
     "a cost the reader typed covers the units they typed");
   assert.equal(unitsBelowCost(carried({ quantity: "" }), CARRIED), null, "the missing units are another refusal");
 });
+
+test("a cost the reader types is their own figure: no longer an estimate", () => {
+  const typed = holdingPayload(carried({ cost: "1250" }), STOCKS, { ...CARRIED, cost_basis: 300 });
+  assert.equal(typed.cost_estimated, false);
+  const cleared = holdingPayload(carried({ cost: "" }), STOCKS, CARRIED);
+  assert.equal(cleared.cost_estimated, null, "no cost, nothing estimated");
+});
+
+test("a cost left as loaded keeps its estimate, by not sending it", () => {
+  assert.equal("cost_estimated" in holdingPayload(carried({ quantity: "14" }), STOCKS, CARRIED), false);
+  assert.equal("cost_estimated" in holdingPayload(carried(), STOCKS, null), false, "a new row says nothing");
+});
