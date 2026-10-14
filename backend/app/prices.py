@@ -148,7 +148,10 @@ def _fetch_close_window(
     ends, and a caller reading "the last row" silently gets the PREVIOUS
     session — priced and dated on a day the purchase did not happen. Asking for
     the rows as they are lets the day being asked about be looked up instead of
-    assumed.
+    assumed. A window whose every row is empty reads the same way since
+    yfinance 1.7.0, which gives every price column as numbers; 1.4.1 gave that
+    column as None objects, and the `float` below raised TypeError (brief AT,
+    `tests/test_a_window_of_empty_rows.py`).
 
     `auto_adjust=False` must not be simplified either. yfinance's default
     puts Yahoo's dividend-adjusted close where the close is: lower than the
@@ -606,7 +609,8 @@ def _fetch_dividends(symbol: str, period: str = "max") -> DividendWindow:
     yfinance does not raise when no answer comes back: it logs the failure and
     leaves the dividends as None, where an answer with no dividend is an empty
     Series. Measured 2026-09-30 on yfinance 1.4.1 with the network refused, for
-    tickers whose timezone it had cached (any ticker priced before). This
+    tickers whose timezone it had cached (any ticker priced before), and the
+    same on 1.7.0 on 2026-10-14 (brief AT, Yahoo faked). This
     returned [] for both, so an outage read as a fund that pays nothing, and a
     check that never happened could have been kept as the day's.
 
@@ -624,7 +628,8 @@ def _fetch_dividends(symbol: str, period: str = "max") -> DividendWindow:
     on 18 public tickers (brief AK), it gave the same 1,464 dividends but one,
     KO's 0.18 of 2001-09-12, a day New York did not open, which it moved to
     the session before (an event on a day with no price row goes on the row
-    before it); and it drops a currency Yahoo names (read in yfinance 1.4.1).
+    before it); and it drops a currency Yahoo names (read in yfinance 1.4.1,
+    and so does 1.7.0, shown 2026-10-14 with Yahoo's answer faked).
     An ex-date decides which units earned a dividend, the rate it is converted
     at and whether it is already recorded, so the dividends come from here and
     the price from the batch."""
@@ -763,7 +768,9 @@ def listing(symbol: str) -> dict | None:
     listed" from "not answered" (the second says nothing about whether the
     share exists), and yfinance raises on every failure it meets and returns
     an empty table only when nothing matched (read in yfinance 1.4.1's
-    `Lookup._fetch_lookup`). Network call."""
+    `Lookup._fetch_lookup`, and in 1.7.0's, where an error Yahoo answers with
+    raises YFDataException instead of 1.4.1's accidental AttributeError;
+    shown 2026-10-14 with Yahoo's answer faked). Network call."""
     wanted = (symbol or "").strip().upper()
     if not wanted:
         return None
