@@ -125,8 +125,9 @@ export type StreamHandlers = {
       the query it sent and the pages, under the search's line and before the
       words written from them. */
   onSources: (found: { query: string; pages: { url: string; title: string }[] }) => void;
-  /** One finished step of a long tool. The analyzer is three to six model
-      calls; this is what the minute is made of. */
+  /** One finished step of a long tool. The analyzer is three to six steps,
+      the analyst's in up to four requests each; this is what its minutes are
+      made of. */
   onStep: (step: ChatStepEvent) => void;
   /** A write the model proposed. Nothing has happened yet. */
   onCard: (card: ChatCardBlock) => void;
@@ -142,9 +143,10 @@ export type StreamHandlers = {
 // after `start` is the card as stored (`decided`); a refusal (the card is
 // gone, already answered, or stale) arrives as an HTTP error instead.
 //
-// One exception, and it is the analyzer: three to six model calls, a minute of
-// them, and a minute of a request holding open before the first byte is the
-// spinner the step events exist to replace. Its decision is still taken before
+// One exception, and it is the analyzer: three to six steps, the analyst's in
+// up to four requests each, minutes of them, and minutes of a request holding
+// open before the first byte are the spinner the step events exist to
+// replace. Its decision is still taken before
 // the stream — nothing else can decide that card — and its WORK happens on it,
 // which is why a failure there arrives as an `error` event rather than a 409.
 //

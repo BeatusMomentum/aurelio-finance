@@ -2716,8 +2716,9 @@ class ChatStep(BaseModel):
     """A long tool has finished one of its steps, and is going on.
 
     Sent while it runs, and never stored. Its job is `ChatTool`'s job said more
-    than once: to be what the silence IS. The analyzer is three to six model
-    calls and a minute of them, and the page it used to live on refused to fake
+    than once: to be what the silence IS. The analyzer is three to six steps,
+    the analyst's in up to four requests each, and minutes of them, and the
+    page it used to live on refused to fake
     a progress bar for exactly the right reason — `run_chain` wrote nothing
     until all of it had finished, so "step 2 of 4" would have been invented.
     Now each finished step is a fact the orchestrator was told, so it can be
